@@ -1,0 +1,367 @@
+---
+title: "04_CreateTimeVarying"
+author: "ryorlets"
+date: "2022-10-20"
+output: html_document
+---
+Goals:
+-Create 6-month summary of each covariate
+
+# Step 
+Load packages
+```{r}
+pacman::p_load(haven, 
+               lubridate, 
+               dplyr, 
+               Hmisc,      # Lag()
+               DescTools   # locf()
+               )
+```
+# Step 
+Load data
+```{r}
+load('Step03Manipulating_BackboneAssessments.Rdata')
+# Origin: Created by running Step3 coding file
+# Description: person-assessments for participants included in the analytic data set (n=5052)
+#   Rows: Rows that contain assessments (includes EarliestARTInitDate and 6-month visits) only
+#   Columns: IndividualId, IntervalStart, IntervalStart_assess, IntervalEnd_PT, IntervalEnd_6mos, EndDate_PT, VisitDate_DoD, assessment_date_DoD, assessment_rank_DoD, Died, DoD
+
+load('Step03Manip_Rows6moBeforeEachFUPPd.Rdata')
+#	Origin: Created by running Step3 coding file
+#	Description: Rows that contain person-time that occurs 6 months before every assessment_date_DoD, where each assessment_date_DoD includes EarliestARTInitDate and 6-month visits. These are the rows over which we will summarise exposure and covariates before each assessment.
+#   Rows: Rows that contain person-time that occurs 6 months before every assessment_date_DoD
+#   Columns: Clean sociodemographic variables and viral load variables
+```
+# Step 4
+Re-save Step03Manip_Rows6moBeforeEachFUPPd as something more manageable 
+```{r}
+df1 <- Step03Manip_Rows6moBeforeEachFUPPd
+```
+# Step 5
+Clean education variable to prepare for summarizing it across time-periods (to make it time-varying) later
+```{r}
+# Education
+df1$edu_level <- recode(df1$edu,
+                # old = new
+                'Grade 7 or lower' = 0,
+                'Grade 8 or higher' = 1)
+df1$edu_level <- as.numeric(df1$edu_level)
+
+ length(unique(df1$IndividualId))
+# 5052
+
+ nrow(df1)
+# 167522
+```
+# Step 6
+Clean cohabitation variable to prepare for summarizing it across time-periods (to make it time-varying) later
+```{r}
+# Cohabitation
+df1$cohabit_level <- recode(df1$marital,
+                # old = new
+                'Not married' = 0,
+                'Married or cohabiting' = 1)
+df1$cohabit_level <- as.numeric(df1$cohabit_level)
+
+ length(unique(df1$IndividualId))
+# 5052
+
+ nrow(df1)
+# 167522
+```
+# Step 7
+Create an out-migration frequency variable
+```{r}
+df2 <- df1 %>%
+  group_by(IndividualId, VisitDate_DoD) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create flag for instances in which Resident==1 is followed by Resident==0, indicating an out-migration event
+  mutate(outmig_flag = if_else(((Lag(Resident) == 1) & (Resident == 0)), 1, 0, 0),
+  # Exposure definition: frequency of out-migration events per person
+        outmig_freq = length(which(outmig_flag == 1)))
+
+ length(unique(df2$IndividualId))
+# 5052
+
+ nrow(df2)
+# 167522
+
+# View(df2[ , c('IndividualId', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate_DoD', 'outmig_flag', 'outmig_freq')])
+
+# View(df2[df2$IndividualId == 20504 , c('IndividualId', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate_DoD', 'outmig_flag', 'outmig_freq')])
+```
+# Step 8
+Create an out-migration pattern variable
+```{r}
+df3 <- df2 %>%
+  group_by(IndividualId, VisitDate_DoD) %>%
+  arrange(IndividualId, Episode) %>%
+  # Exposure definition: pattern of out-migration per person
+        mutate(outmig_pattern = case_when(
+            # always out-migrant
+              # If someone has 0 episodes in which they are home (Resident == 1); they are never home, and always an out-migrant
+            length(which(Resident == 1)) == 0 ~ 2, 
+            # sometimes out-migrant
+              # If someone has 1 or more out-migration event flags, they are out-migrating >= times that year
+            (length(which(outmig_flag == 1)) >= 1) ~ 1,
+            # never out-migrant (always permanent resident, non-migrant)
+              # If someone has Resident == 1 for all episodes within this time frame OR zero out-migration events (eg, 0, 0, 1)
+            ((length(which(Resident == 1)) == length(IndividualId)) | (length(which(outmig_flag == 1)) == 0)) ~ 0)) %>%
+   # Rank the outmig_flags within each person to use it later to distinguish migration events within a given person 
+         mutate(outmig_flag_rank = ifelse(Resident == 0, cumsum(outmig_flag), NA)) 
+
+ length(unique(df3$IndividualId))
+# 5052
+
+ nrow(df3)
+# 167522
+
+# View(df3[ , c('IndividualId', 'StartDate', 'EndDate', 'Episode', 'VisitDate_DoD', 'Resident', 'outmig_flag', 'outmig_freq', 'outmig_pattern')])
+```
+# Step 9
+Create duration of time spent living away from home
+```{r}
+df4 <- df3 %>%
+  # Calculate elapsed time of each episode
+  mutate(ep_duration_mos = as.duration(elapsed.time)/ dmonths(1)) %>%
+  # Within each assessment for a given person
+  group_by(IndividualId, VisitDate_DoD) %>%
+  arrange(IndividualId, Episode) %>%
+  # Exposure definition: duration of time away from home (ie, elapsed time when Resident == 0) during 6 months before each assessment
+  # Note: coding it this way means that someone does not need to have an out-migration event to have time away from home. We're counting months away from home (Resident == 0), even if that came before an in-migration event. In other words, someone can have a duration > 0 but be categorized as someone who never moved outside of the surveillance site.
+  # First, create a new version of elapsed time of each episode in which we only count the time of the episode if Res==0 for that episode
+  mutate(nonres_ep_duration_mos = ifelse(Resident == 0, ep_duration_mos, 0),
+  # Now we can sum this duration variable since only Res==0 time will be counted, and set 6 months as a max (since we did not splice Start/End times of episodes, > 6 months of person-time can be included)
+    nonres_sum_ep_duration_mos = case_when(
+    # If someone is a non-resident for part or all of the 6 months and the duration across those episode(s) is over 6 months, nonres_duration == 6
+    (sum(nonres_ep_duration_mos) > 6) ~ 6, 
+    # If someone is a non-resident for part or all of the 6 months and the duration across those episode(s) is <= 6 months, we use the sum
+    (sum(nonres_ep_duration_mos) <= 6) ~ sum(nonres_ep_duration_mos)))
+
+ length(unique(df4$IndividualId))
+# 5052
+
+ nrow(df4)
+# 167522
+
+# View(df4[ , c('IndividualId', 'StartDate', 'EndDate', 'Episode', 'VisitDate_DoD', 'suppression', 'Resident', 'ep_duration_mos', 'nonres_ep_duration_mos', 'nonres_sum_ep_duration_mos')])
+  
+# View(df4[df4$IndividualId == 651 , c('IndividualId', 'StartDate', 'EndDate', 'Episode', 'EarliestARTInitDate', 'VisitDate_DoD', 'suppression', 'Resident', 'ep_duration_mos', 'nonres_ep_duration_mos', 'nonres_sum_ep_duration_mos')])
+```
+# Step 10
+Summarise exposures and covariates
+```{r}
+backbone_expcov <- df4 %>%
+  group_by(IndividualId, VisitDate_DoD) %>%
+  arrange(IndividualId, Episode) %>%
+  # Summarise to collapse to one row
+  summarise(VisitDate_DoD = max(as.Date(VisitDate_DoD)),
+            # Covariate: out-migration pattern history, one year prior to EarliestARTInitDate
+            exp_hx = max(outmig_hx_freq_cat),
+            # Another time-invariant covariate
+            EarliestARTInitPreUTT = max(as.numeric(EarliestARTInitPreUTT)),
+            cd4_base = max(base_CD4CountV2),
+            cd4 = mean(CD4CountV2),
+            # clinicalstageV2_max = max(clinicalstageV2),
+            #durationdays_ARTtoCD4 = max(durationdays_ARTtoCD4),
+            # Exposure: out-migration pattern calculated over the 30 days before each period
+            exp = mean(outmig_pattern),
+            # Exposure: duration of months spent away from home over the 30 days before each period
+            nonres_duration_mos = max(nonres_ep_duration_mos),
+            # Covariates
+            EndDate_PT_max = max(EndDate_PT),
+            suppression = max(suppression),
+            children = median(ChildNumber),
+            age = mean(Age),
+            sex_num = max(as.numeric(Sex)),
+            #Sex = Sex, #note that female = 2 and male = 1
+            sei = median(SEIdx),
+            sei_hx = median(SEIdx_hx),
+            edu = max(edu_level), 
+            cohabit = max(cohabit_level))
+            # We don't need EarliestARTInitDate and DoD here since we pull it in from the outcomes data set
+            # EarliestARTInitDate = max(as.Date(EarliestARTInitDate)), 
+            # DoD = max(as.Date(DoD)))
+            
+backbone_expcov$sex <- recode(backbone_expcov$sex_num,
+                    '2' = 'Female', 
+                    '1' = 'Male')
+
+ length(unique(backbone_expcov$IndividualId))
+# 5052
+
+ nrow(backbone_expcov)
+# 44708
+
+# Confirm we only have one summarised row per assessment_date now
+# View(backbone_expcov)
+
+# Look at someone who ultimately has no outcome measurement because they are lost within 6 months of EarliestARTInitDate
+# View(backbone_expcov[backbone_expcov$IndividualId == 7206, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD')])
+
+# Look at someone who ultimately has an outcome_date_DoD but was lost within 6 months of EarliestARTInitDate
+# View(backbone_expcov[backbone_expcov$IndividualId == 651, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD')])
+
+# View(backbone_expcov[backbone_expcov$IndividualId == 231393, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD')])
+```
+####################
+# new outcomes merge
+########################
+# Left-join
+# LHS: Pancaked surveillance data person-assessment rows with summarised time-varying exposure and covariates
+# RHS: Outcomes data set 
+```{r}
+# Left-join
+# LHS: Pancaked surveillance data person-assessment rows with summarised time-varying exposure and covariates
+# RHS: Outcomes data set backbone
+# Merge on person and VisitDate_DoD and visit_rank_DoD 
+merge <- left_join(x = backbone_expcov, y = Step03Manipulating_BackboneAssessments, by = c('IndividualId' = 'IndividualId', 'VisitDate_DoD' = 'VisitDate_DoD'))
+
+ length(unique(merge$IndividualId))
+# 5052
+
+ nrow(merge)
+# 44708
+
+# View(merge[ , c('IndividualId', 'EndDate_PT_max', 'EarliestARTInitDate', 'VisitDate_DoD', 'DoD')])
+
+# For someone who did not die
+# View(merge[merge$IndividualId == 785, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who did die
+# View(merge[merge$IndividualId == 84, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who is lost within the first 6 months 
+# View(merge[merge$IndividualId == 651, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who is lost within the first 6 months 
+# View(merge[merge$IndividualId == 7206, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who dies within the first 6 months
+# View(merge[merge$IndividualId == 4765, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')])                       
+```
+# Rank the visits now that we have a final backbone with exposures from person-time 6 months before each FUP interval start (ie, missing person-time won't force us to drop visits)
+```{r}
+merge1 <- merge %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, VisitDate_DoD) %>%
+  mutate(visit_rank_DoD = rank(VisitDate_DoD))
+
+# For someone who dies within the first 6 months
+# View(merge1[merge1$IndividualId == 4765, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'visit_rank_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')]) 
+
+# View(merge1[merge1$IndividualId == 20504, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'visit_rank_DoD', 'DoD', 'LostToFollowUp', 'Refusal', 'admin_cens')]) 
+# See how now it's visits 1 and 2, whereas before it was visits 2 and 3 because of the missing person-time for the exposure that goes with the visit that comes before the visits here (note that it also completely dropped a lot of other visits before these because there was no visit or exposure person-time for them - this is an odd case where there is ~ 3 years of missing person-time)
+```
+# Now that we have the final person-assessment data set, create the death_assessed variable, which relies on knowing the maximum VisitDate
+```{r}
+merge_outcome_creation <- merge1 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, VisitDate_DoD) %>%
+  # If someone isn't missing a DoD and it falls within a follow-up period, death_assessed == 1
+  mutate(death_assessed = case_when(((!is.na(DoD)) & ((IntervalStart <= DoD) & (DoD <= VisitDate_DoD))) ~ 1,
+  # If someone isn't missing a DoD but it falls after their maximum VisitDate, death_assessed == 0
+                                    ((!is.na(DoD)) & (DoD <= max(VisitDate_DoD)) & (visit_rank_DoD != max(visit_rank_DoD))) ~ 0,
+  # If someone is missing a DoD and it is not their maximum VisitDate, death_assessed == 0
+                                    ((is.na(DoD)) & (VisitDate_DoD != max(VisitDate_DoD))) ~ 0,
+  # If someone is missing a DoD and it is their maximum VisitDate, death_assessed == NA
+                                    ((is.na(DoD)) & (VisitDate_DoD == max(VisitDate_DoD))) ~ NA_real_))
+  # # Notice that death_assessed makes death_assessed == NA for all visits for people who do not have a DoD
+  # # For people who do not have a DoD, we want them to have death_assessed == 0 up until their last visit, at which point is it NA because they are lost (we do not know if they died or not)
+  # mutate(death_assessed = ifelse((is.na(DoD)) & (VisitDate_DoD != max(VisitDate_DoD)), 0, death_assessed))
+
+ length(unique(merge_outcome_creation$IndividualId))
+# 5052
+
+ nrow(merge_outcome_creation)
+# 44708
+
+# View(merge_outcome_creation[, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who did not die
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 785, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who did die
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 84, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who is lost within the first 6 months 
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 651, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who is lost within the first 6 months 
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 7206, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+# For someone who dies within the first 6 months
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 4765, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])  
+
+# View(merge_outcome_creation[merge_outcome_creation$IndividualId == 131314, c('IndividualId', 'EndDate_PT_max', 'VisitDate_DoD', 'DoD', 'death_assessed', 'LostToFollowUp', 'Refusal', 'admin_cens')])  
+```
+# Step 12
+In the outcomes backbone data set, calculate 
+-time between visits
+-time from EarliestARTInitDate to each VisitDate_DoD
+-total person-time (EarliestARTInitDate to EndDate_PT)
+```{r}
+data1 <- merge_outcome_creation %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, VisitDate_DoD) %>%
+  # Calculate the number of days between each assessment date. Remember assessment_rank==1 is EarliestARTInitDate, so if assessment_rank == 1, the duration until that assessment is 0. If assessment_rank is !=1, then we can calculate the duration in days between the prior (ie, lagged) assessment date and the current assessment date
+  # Time between visits
+  mutate(time_between_visits_DoD_mos = ifelse(visit_rank_DoD == 1, 0, as.duration(Lag(VisitDate_DoD) %--% VisitDate_DoD)/dmonths(1))) %>%
+  # Time from EarliestARTInitDate to each VisitDate_DoD
+  mutate(time_from_ART_to_visit_mos = as.duration(EarliestARTInitDate %--% VisitDate_DoD/dmonths(1))) %>%
+  # Total person time contributed
+  mutate(time_total_persontime_mos = as.duration(EarliestARTInitDate %--% EndDate_PT/dmonths(1)))
+
+ length(unique(data1$IndividualId))
+# 5052
+
+ nrow(data1)
+# 44708
+
+# View(data1[ , c('IndividualId', 'EarliestARTInitDate', 'EndDate_PT', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+
+# Let's look at someone who does not die when they exit the study (at their exact time of person-time end)
+# View(data1[data1$IndividualId == 785, c('IndividualId', 'EarliestARTInitDate', 'EndDate_PT', 'VisitDate_DoD', 'death_assessed', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+
+# Now look at someone who does die
+# View(data1[data1$IndividualId == 84, c('IndividualId', 'EarliestARTInitDate', 'EndDate_PT', 'VisitDate_DoD', 'death_assessed', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+```
+# Step 19
+Create censored indicator for each person where censored==1 if death_assessed is NA and it's the last person-assessment-period for someone, and censored == 0 otherwise
+```{r}
+data2 <- data1 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, visit_rank_DoD) %>%
+  # Create an indicator variable for if a person-assessment-period row has no event and is the last assessment for that person
+  # the max(visit_rank_DoD) part is not necessary since death_assessed can only be NA if it's the last person-assessment (ie, that person is lost to FUP and that's why we cannot follow them anymore and don't know their death status)
+  mutate(censored = ifelse((is.na(death_assessed)) & (visit_rank_DoD == max(visit_rank_DoD)), 1, 0)) 
+
+ length(unique(data2$IndividualId))
+# 5052
+
+ nrow(data2)
+# 44708, which is the number of person-assessment rows
+
+# View(data2[, c('IndividualId', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'censored', 'DoD', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+ 
+# For someone who is LTFUP/refuses after first assessment
+# View(data2[data2$IndividualId == 785, c('IndividualId', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'censored', 'DoD', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+# Confirms they care censored==1 at last person-assessment-period
+
+# For someone who died before first assessment
+# View(data2[data2$IndividualId == 4765, c('IndividualId', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'censored', 'DoD', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+# Confirms they care censored==0 at last person-assessment-period, and we successfully carried forward their outcome of death
+
+# For someone who dies after first assessment
+# View(data2[data2$IndividualId == 84, c('IndividualId', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'censored', 'DoD', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+# Confirms they care censored==0 at last person-assessment-period
+
+# For someone who is censored after the first assessment
+# View(data2[data2$IndividualId == 20504, c('IndividualId', 'VisitDate_DoD', 'visit_rank_DoD', 'death_assessed', 'censored', 'DoD', 'time_between_visits_DoD_mos', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos')])
+```
+# Step 21
+Create .Rdata file
+```{r}
+Step04CreateTimeVarying <- data2
+save(Step04CreateTimeVarying, file = 'Step04CreateTimeVarying.Rdata')
+```

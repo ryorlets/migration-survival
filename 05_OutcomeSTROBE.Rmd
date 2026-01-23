@@ -1,0 +1,465 @@
+---
+title: "Step05_OutcomeSTROBEandSubset"
+author: "ryorlets"
+date: "2022-11-07"
+output: html_document
+---
+# Step 2
+Load packages
+```{r}
+pacman::p_load(haven, 
+               dplyr,
+               writexl,     # write_xlsx()
+               tableone     # CreateTableOne
+               )
+```
+# Step 3
+Load data
+```{r}
+load('Step04CreateTimeVarying.Rdata')
+# Origin: Created by running Step4_CreateTimeVarying
+# Description: person-assessments for participants included in the analytic data set (n=5052) with censored== assigned
+# Rows: rows that contain assessments (includes EarliestARTInitDate and 6-month visits), plus rows in which someone is censored
+# Columns: IndividualId, EndDate_PT, VisitDate_DoD, visit_rank_DoD, death_assessed, DoD, time-varying covariates summarized across 6-month time period, censored, LostToFollowUp, Refusal, admin_cens 
+```
+# Step 4
+Re-save Step04CreateTimeVarying as something more manageable 
+```{r}
+# Use name from prior file
+df <- Step04CreateTimeVarying
+```
+# Step 5
+Using full person-assessment data set, check how many people died and how many people were censored (lost to FUP, etc.)
+```{r}
+# a.	Check how many person-assessments were not censored AND died
+length(which((df$death_assessed == 1) & (df$censored == 0)))
+# 444
+sum((df$death_assessed == 1) & (df$censored == 0))
+#444
+
+# View(df[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'censored')])
+
+
+df_died_ever <- df %>%
+        # it's more accurate to say NA as the second level of this variable, 
+        # but we use 0 because we need to use this variable for imputing CD4 later
+        mutate(died_ever = ifelse(death_assessed == 1 & censored == 0, 1, 0))
+
+sum((df_died_ever$death_assessed == 1) & (df_died_ever$censored == 0))
+#444
+
+# View(df_died_ever[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'censored', 'died_ever')])
+
+df_died_tail <- df_died_ever %>%
+  group_by(IndividualId) %>%
+  slice_tail()
+
+# View(df_died_tail[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'censored', 'died_ever')])
+
+sum(df_died_tail$death_assessed == 1, na.rm = TRUE)
+# 444
+
+sum(df_died_tail$censored == 1)
+# 4608
+sum(is.na(df_died_tail$death_assessed))
+# 4608 (We expect and need these two values to be the same because you have a missing death outcome if you were censored during that visit)
+
+sum(df_died_tail$died_ever == 1, na.rm = TRUE)
+# 444
+
+# Select only IndividualId and died_ever to prepare for merge back to full data
+df_died_ever_backbone <- df_died_tail %>%
+  group_by(IndividualId) %>%
+  select('IndividualId', 'died_ever')
+  
+# View(df_died_ever_backbone[ , c('IndividualId', 'died_ever')])
+
+# Now merge the backbone back to the full data set in a one-to-many merge so 
+# that we have died_ever as a time-invariant variable assigned to every 
+# person-period assessment
+df2 <- merge(x = df, y = df_died_ever_backbone, by = 'IndividualId')
+
+# View(df2[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'censored', 'died_ever')])
+
+# i.	Check how many person-assessments had death_assessed == 1
+length(which(df2$death_assessed == 1))
+# 444
+
+# b.	Check how many person-assessments were censored AND had death_assessed == NA
+length(which((is.na(df2$death_assessed)) & (df2$censored == 1)))
+# 4608
+
+# i.	Check how many person-assessments had death_assessed == NA
+length(df2$IndividualId[is.na(df2$death_assessed)])
+# 4608
+
+#ii.	Check how many person-assessments had death_assessed == NA and censored == 0
+length(which(is.na(df2$death_assessed) & df2$censored == 0))
+# 0
+```
+# Step 6
+Using the tail of the person-assessment data set, confirm how many people died and how many people were censored (lost to FUP, etc.)
+```{r}
+# Take the last person-assessment for each person 
+df2_tail <- df2 %>%
+  group_by(IndividualId) %>%
+  slice_tail()
+
+# a.	Check how many person-assessments were not censored AND died
+length(which((df2_tail$death_assessed == 1) & (df2_tail$censored == 0)))
+# 444
+
+# i.	Check how many person-assessments had death_assessed == 1
+length(which(df2_tail$death_assessed == 1))
+# 444
+
+# b.	Check how many person-assessments were censored AND had death_assessed == NA
+length(which((is.na(df2_tail$death_assessed)) & (df2_tail$censored == 1)))
+# 4608
+
+# i.	Check how many person-assessments had death_assessed == NA
+length(df2_tail$IndividualId[is.na(df2_tail$death_assessed)])
+# 4608
+
+#ii.	Check how many person-assessments had death_assessed == NA and censored == 0
+length(which(is.na(df2_tail$death_assessed) & df2_tail$censored == 0))
+# 0
+
+# c.	Check how many people were not censored
+length(which(df2_tail$censored == 0))
+# 444
+
+# i.	Check how many people died
+length(which(df2_tail$death_assessed == 1))
+# 444
+
+# d.	Check how many people were censored
+length(which(df2_tail$censored == 1))
+# 4608
+
+# i.	Check how many people had death_assessed == NA in their last person-assessment period
+length(which(is.na(df2_tail$death_assessed)))
+# 4608
+```
+Calculate exact total person-time contributed during FUP
+
+# Step 7
+Within the tail of the full person-assessment data set, calculate time from ART initiation to EndDate of their last person-assessment; this is when the person-time actually stopped. We cannot control if they had complete person-time (and all assessments) from start until this date, but we do know this is when they were lost
+We use EndDate instead of EndDate_PT_max because EndDate_PT_max is the absolute maximum person-time date in the data set - but some people had missing person-time and didn't actually get visits included up until then. But the EndDate of the last visit is when they died or were lost, regardless of if we have full person-time up until then.
+```{r}
+df2_tail <- df2_tail %>%
+  group_by(IndividualId) %>%
+  mutate(time_ART_to_final_enddate_mos = as.duration(EarliestARTInitDate %--% EndDate/dmonths(1)))
+
+# View(df2_tail[ , c('IndividualId', 'VisitDate_DoD', 'EarliestARTInitDate', 'EndDate', 'visit_rank_DoD', 'time_ART_to_final_enddate_mos', 'time_from_ART_to_visit_mos', 'death_assessed', 'DoD', 'censored', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+```
+# Step 8
+Sum exact total person-time
+```{r}
+sum(df2_tail$time_ART_to_final_enddate_mos)
+# 254,715 person-months
+254715/12
+# 21226.25 person-years
+```
+# Step 9
+Stratify person-time by censor/died status
+```{r}
+df2_tail$time_ART_to_final_enddate_mos <- as.numeric(df2_tail$time_ART_to_final_enddate_mos)
+
+table_persontime_by_outcome <- CreateTableOne(vars = 'time_ART_to_final_enddate_mos', strata = 'censored', data = df2_tail, addOverall = TRUE)
+table_persontime_by_outcome
+```
+# Step 10
+Among people who were censored, look at median person-time overall, by sex, and how many were lost within the first 6 months
+```{r}
+# Stratify by censored status
+df2_tail_censored_status <- subset(df2_tail, censored == 1)
+median(df2_tail_censored_status$time_ART_to_final_enddate_mos)
+# 51.975
+fivenum(df2_tail_censored_status$time_ART_to_final_enddate_mos)
+# [1]  0.00000 37.12526 51.97536 72.50924 95.86858
+
+df2_tail_censored_status_m <- subset(df2_tail_censored_status, sex == 'Male')
+median(df2_tail_censored_status_m$time_ART_to_final_enddate_mos)
+# 51.44969
+fivenum(df2_tail_censored_status_m$time_ART_to_final_enddate_mos)
+# min, 25th percentile aka first quartile, median, third quartile, max
+# [1]  0.09856263 35.94250513 51.44969199 73.33059548 95.34291581
+
+df2_tail_censored_status_f <- subset(df2_tail_censored_status, sex == 'Female')
+median(df2_tail_censored_status_f$time_ART_to_final_enddate_mos)
+# 52.17248
+fivenum(df2_tail_censored_status_f$time_ART_to_final_enddate_mos)
+# [1]  0.00000 37.55236 52.17248 72.24641 95.86858
+
+############
+# How many were lost within 6 months
+length(which(df2_tail_censored_status$time_ART_to_final_enddate_mos < 6.0455))
+# 101
+
+# How many men were lost within 6 months
+length(which(df2_tail_censored_status_m$time_ART_to_final_enddate_mos < 7))
+# 32
+
+# How many women were lost within 6 months
+length(which(df2_tail_censored_status_f$time_ART_to_final_enddate_mos < 7))
+# 84
+
+# How many were lost at visit_rank_DoD
+length(which(df2_tail_censored_status$visit_rank_DoD == 1))
+# 99 persons were lost at their first visit (and therefore will be dropped from the analysis because we never had a chance to check their mortality)
+
+# View(df2_tail_censored_status)
+```
+# Step 11
+Among people who died, look at median person-time overall, by sex, and how many were lost within the first 6 months
+```{r}
+# Stratify by death status
+df2_tail_died <- subset(df2_tail, death_assessed == 1)
+median(df2_tail_died$time_ART_to_final_enddate_mos)
+# 12.25462
+fivenum(df2_tail_died$time_ART_to_final_enddate_mos)
+# 0.06570842  2.52977413 12.25462012 35.90965092 90.28336756
+
+df2_tail_died_m <- subset(df2_tail_died, sex == 'Male')
+length(unique(df2_tail_died_m$IndividualId))
+# 201
+fivenum(df2_tail_died_m$Age)
+# 15.50 32.75 39.80 48.00 81.50
+
+median(df2_tail_died_m$time_ART_to_final_enddate_mos)
+# 13.56879
+fivenum(df2_tail_died_m$time_ART_to_final_enddate_mos)
+# min, 25th percentile aka first quartile, median, third quartile, max
+# 0.09856263  2.98973306 13.56878850 36.73100616 89.16632444
+
+df2_tail_died_f <- subset(df2_tail_died, sex == 'Female')
+length(unique(df2_tail_died_f$IndividualId))
+fivenum(df2_tail_died_f$Age)
+# 15.25000 28.66667 34.00000 42.92857 81.00000
+
+median(df2_tail_died_f$time_ART_to_final_enddate_mos)
+# 10.97331
+fivenum(df2_tail_died_f$time_ART_to_final_enddate_mos)
+# 0.06570842  2.34907598 10.97330595 35.46611910 90.28336756
+
+############
+# How many died within 6 months
+length(which(df2_tail_died$time_ART_to_final_enddate_mos < 7))
+# 183
+
+# How many men died within 6 months
+length(which(df2_tail_died_m$time_ART_to_final_enddate_mos < 7))
+# 75
+
+# why are there 4 more men who died before 6 months (n=75) when we do it by total person-time (which is the same as the variable time_ART_to_final_enddate_mos) rather than when we use visit_rank_DoD (n=71)?
+## note next line yields error
+# df2_tail_died_m_6mo <- subset(df2_tail_died_m_6mo, time_ART_to_final_enddate_mos < 7)
+# View(df2_tail_died_m_6mo[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos', 'time_ART_to_final_enddate_mos')])
+
+# View(men[men$IndividualId == 1382, ])
+# When we look at this example, here is someone who is alive at Visit 1, and then dies right after Visit 1, so we can assess them as dead at visit 2, but they still didn't contribute much over 6 months in person-time
+
+length(which(df2_tail_died_m$visit_rank_DoD == 1))
+# 71
+
+
+##################
+# Not looking at the tail of the data
+#################
+# Create data set of men, all observations
+men <- subset(df2, sex == 'Male')
+
+# look at deaths by visit
+table(men$death_assessed, men$visit_rank_DoD, exclude = NULL)
+# 71 deaths occurred at visit==1 among men
+
+# Look at men who died at first visit
+men_died_visit1 <- subset(men, ((death_assessed == 1) & (visit_rank_DoD == 1)))
+nrow(men_died_visit1)
+# 71
+# View(men_died_visit1)
+
+table(men_died_visit1$exp, men_died_visit1$exp_hx, exclude = NULL)
+  #    0  1  2
+  # 0 50  0  0
+  # 1  0  3  0
+  # 2  0  2 16
+
+# Look at men who died at second visit
+men_died_visit2 <- subset(men, ((death_assessed == 1) & (visit_rank_DoD == 2)))
+# View(men_died_visit2)
+# View(men_died_visit2[ , c('IndividualId', 'visit_rank_DoD', 'death_assessed', 'time_from_ART_to_visit_mos', 'time_total_persontime_mos', )])
+
+# Look at men who died at first visit and were residents at visit==1
+men_died_visit1_res <- subset(men_died_visit1, exp == 0)
+nrow(men_died_visit1_res)
+# 50 of the 71 who died were living at home/returned home during that time
+# View(men_died_visit1_res)
+# We can see all of them were also residents for the entirety of the year before they started ART
+################
+
+###########
+# Create data set of women, all observations
+women <- subset(df2, sex == 'Female')
+
+# look at deaths by visit
+table(women$death_assessed, women$visit_rank_DoD, exclude = NULL)
+# 100 deaths occurred at visit==1 among women
+##################
+
+# the next few data exploration lines seem to be about men
+length(unique(df2_tail_died_m$IndividualId))
+# 201
+
+table(df2_tail_died_m$exp)
+#   0   1   2 
+# 146   5  50 
+
+# View(df2_tail_died_m[ , c('IndividualId', 'visit_rank_DoD', 'time_ART_to_final_enddate_mos', 'time_from_ART_to_visit_mos', 'exp', 'death_assessed')])
+
+# View(df2_tail_died_m[df2_tail_died_m$time_ART_to_final_enddate_mos < 7, c('IndividualId', 'VisitDate_DoD', 'EarliestARTInitDate', 'EndDate', 'visit_rank_DoD', 'time_ART_to_final_enddate_mos', 'time_from_ART_to_visit_mos', 'exp', 'death_assessed', 'DoD', 'censored', 'LostToFollowUp', 'Refusal', 'admin_cens')])
+
+df2_tail_died_m_under7 <- subset(df2_tail_died_m, time_ART_to_final_enddate_mos < 7)
+
+table(df2_tail_died_m_under7$exp, exclude = NULL)
+#  0  1  2 
+# 53  3 19 
+
+# How many women died within 6 months
+length(which(df2_tail_died_f$time_ART_to_final_enddate_mos < 7))
+# 108
+```
+Prepare to look at why people were censored, and what caused deaths
+# Step 12
+In data with all person-assessments, clean factor variable types
+```{r}
+df2$LostToFollowUp <- as.factor(df2$LostToFollowUp)
+df2$Refusal <- as.factor(df2$Refusal)
+df2$admin_cens <- as.factor(df2$admin_cens)
+```
+# Step 13
+Create a variable to capture if someone is censored and lost for a reason other than what we know (ie, not known that they were LTFUP, refusal, administrative censoring)
+```{r}
+df2 <- df2 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, visit_rank_DoD) %>%
+  mutate(lost_unknown_reason = ifelse(((censored == 1) & (LostToFollowUp == 0 | is.na(LostToFollowUp) | LostToFollowUp == ' ') & (Refusal == 0 | is.na(Refusal) | Refusal == ' ') & (admin_cens == 0)), 1, 0))
+
+df2$lost_unknown_reason <- as.factor(df2$lost_unknown_reason)
+
+# View(df2[ , c('IndividualId', 'VisitDate_DoD', 'EndDate_PT_max', 'visit_rank_DoD', 'death_assessed', 'DoD', 'censored', 'LostToFollowUp', 'Refusal', 'admin_cens', 'lost_unknown_reason')])
+```
+# Step 14
+Collapse causes of death
+```{r}
+df2$cause_primary_collapsed <- recode(df2$Cause1,
+                                      #old = new 
+    # AIDS 
+    '01.03 HIV/AIDS related death' = 'HIV/AIDS related death',
+    # TB
+    '01.09 Pulmonary tuberculosis' = 'TB',
+    # Infectious diseases, other
+    '01.07 Meningitis and encephalitis' = 'Infectious diseases, other',
+    '01.02 Acute resp infect incl pneumonia' = 'Infectious diseases, other',
+    # Maternal
+    '09.01 Ectopic pregnancy' = 'Maternal, perinatal, nutritional, and congenital causes',
+    '09.03 Pregnancy-induced hypertension' = 'Maternal, perinatal, nutritional, and congenital causes',
+    '09.04 Obstetric haemorrhage' = 'Maternal, perinatal, nutritional, and congenital causes',
+    # Non-communicable
+    '02.03 Respiratory neoplasms' = 'Non-communicable diseases or conditions',
+    '02.99 Other and unspecified neoplasms' = 'Non-communicable diseases or conditions',
+    '04.02 Stroke' = 'Non-communicable diseases or conditions',
+    '02.04 Breast neoplasms' = 'Non-communicable diseases or conditions',
+    '03.03 Diabetes mellitus' = 'Non-communicable diseases or conditions',
+    '04.99 Other and unspecified cardiac dis' = 'Non-communicable diseases or conditions',
+    '06.02 Liver cirrhosis' = 'Non-communicable diseases or conditions',
+    '02.02 Digestive neoplasms' = 'Non-communicable diseases or conditions',
+    '02.05 Reproductive neoplasms F' = 'Non-communicable diseases or conditions',
+    '04.01 Acute cardiac disease' = 'Non-communicable diseases or conditions',
+    '05.01 Chronic obstructive pulmonary dis' = 'Non-communicable diseases or conditions',
+    '07.01 Renal failure' = 'Non-communicable diseases or conditions',
+    # Trauma, violent and non-violent
+    '06.01 Acute abdomen' = 'Trauma, violent and non-violent',
+    '12.01 Road traffic accident' = 'Trauma, violent and non-violent',
+    '12.09 Assault' = 'Trauma, violent and non-violent',
+    '12.04 Accid drowning and submersion' = 'Trauma, violent and non-violent',
+    '12.07 Accid poisoning & noxious subs' = 'Trauma, violent and non-violent',
+    # Unknown
+    ' ' = 'Missing',
+    '99 Cause of death unknown' = 'Missing',
+    '<NA>' = 'Missing',
+    is.na = 'Missing'
+  )
+
+df2$cause_primary_collapsed[is.na(df2$cause_primary_collapsed)] <- 'Missing'
+df2$cause_primary_collapsed[df2$cause_primary_collapsed == ''] <- 'Missing'
+
+# Make it a factor variable
+df2$cause_primary_collapsed <- as.factor(df2$cause_primary_collapsed)
+
+# Drop levels with no values
+df2$cause_primary_collapsed <- droplevels(df2$cause_primary_collapsed)
+
+# View(df2[ , c('IndividualId', 'VisitDate_DoD', 'EndDate_PT_max', 'visit_rank_DoD', 'death_assessed', 'cause_primary_collapsed', 'DoD', 'censored', 'LostToFollowUp', 'Refusal', 'admin_cens', 'lost_unknown_reason')])
+# Note: the way we have assigned cause of death, it is now 'Missing' for people who never died (and 'Missing' for people for whom we do not know the cause)
+```
+Look at reasons why people were censored
+# Step 15
+Subset to persons who were censored
+```{r}
+# Subset to person-assessment in which people who were censored became censored
+df2_censored <- subset(df2, censored == 1)
+
+# Check that subset worked
+length(which(df2_censored$censored == 1))
+# 4608
+```
+# Step 16
+Among people who were censored==1, create table to summarize reasons for censoring
+```{r}
+# Among people who were censored, look at reasons for censoring overall and then by sex
+table_cens_type <- CreateTableOne(vars = c('LostToFollowUp', 'Refusal', 'admin_cens', 'lost_unknown_reason'), strata = 'sex_num', data = df2_censored, addOverall = TRUE)
+
+table_cens_type <- print(table_cens_type, showAllLevels = TRUE, includeNA = TRUE)
+table_cens_type <- as.data.frame(table_cens_type)
+write_xlsx(table_cens_type, 'SupplTable_CensoringCategories.xlsx')
+```
+Look at reasons why people died
+# Step 17
+Subset to persons who died
+```{r}
+# Subset to person-assessment in which who died
+df2_died <- subset(df2, death_assessed == 1)
+
+# Check that subset worked
+length(which(df2_died$death_assessed == 1))
+# 444
+```
+# Step 18
+Among people who died, create table to summarize causes of death per verbal autopsy, by sex (could also do this by migration history at start of FUP - the year before ART start)
+```{r}
+table_death_cause <- CreateTableOne(vars = c('cause_primary_collapsed', 'Lik1'), strata = 'sex_num', data = df2_died, addOverall = TRUE)
+
+table_death_cause <- print(table_death_cause, showAllLevels = TRUE)
+table_death_cause <- as.data.frame(table_death_cause)
+write_xlsx(table_death_cause, 'SupplTable_DeathCauses.xlsx')
+
+# Could also consider cause of death by migration history in year before starting ART
+table(df2_died$cause_primary_collapsed, df2_died$exp_hx, exclude = NULL)
+```
+# Step 19
+Summarize likelihood of primary cause being primary cause
+```{r}
+summary(df2_died$Lik1)
+  # Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+  # 41.00   92.00   99.00   92.11   99.00  100.00      49 
+# Notice that 49 people are missing a likelihood value of the primary cause being the primary cause; there were 50 without a primary cause
+```
+# Step 20
+Save updated person-assessment data set to use for weights (just in case these new variables are ever of interest)
+```{r}
+Step05_OutcomeSTROBE <- df2
+save(Step05_OutcomeSTROBE, file = 'Step05_OutcomeSTROBE.Rdata')
+```
+

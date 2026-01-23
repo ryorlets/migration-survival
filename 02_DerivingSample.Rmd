@@ -1,0 +1,1106 @@
+---
+title: "02_DerivingSample"
+author: "Rachel Yorlets"
+date: "10/6/2022"
+output: html_document
+---
+The goal of this code file is to 
+-Load and merge additional data sets for viral load, CD4 from ARTemis, and CD4
+from NHLS/TIER.net/ARTemis
+-Create the analytic sample (pre-censoring)
+-Creates EarliestARTInitPreUTT and EarliestARTInitPostUTT
+
+# Step 1
+Load packages
+```{r}
+pacman::p_load(haven,      # read_dta()
+               lubridate,  # date
+               dplyr,      # case_when()
+               Hmisc,      # Lag()
+               tableone,   # CreateTableOne()
+               writexl,    # Save table as .xlsx file
+               paletteer,  # color palette
+               ggplot2,
+               stringr,    # use with ggplot
+               scales,     # use with ggplot
+               mice        # multiple imputation via chained eqns
+               )
+```
+# Step 2
+Load data from first coding file: 01_Cleaning.Rmd
+```{r}
+load('01_Cleaning.Rdata')
+CleanSociodem <- as.data.frame(Step01Clean)
+
+length(unique(CleanSociodem$IndividualId))
+# 220648
+```
+# Step 3a
+Load data: AHRI Population Intervention Programme Community Viral Load - 2011
+```{r}
+vl <- read_dta("~/AHRI data/AHRI Population Intervention Programme Community Viral Load - 2011/CVL 01-01 AHRI.PIP.CommunityViralLoad.2020.dta")
+```
+# Step 3b
+Load data set: CD4 count from ARTemis
+```{r}
+#cd4ARTemisdata <- read_dta('~/AHRI data/ARTemis/ARTemis_CD4.dta')
+# make copy of data
+# select all columns except for EarliestARTInitDate, because we will merge it to
+# a data set that also has EarliestARTInitDate
+#cd4data <- cd4ARTemisdata %>%
+#  select(IndividualId, TestDate, CD4Count, CD4Pct)
+
+# Set cd4data object as a data frame
+#cd4data <- as.data.frame(cd4data)
+```
+# Step 3c
+Load data set: CD4 count from NHLS/TIER.net/ARTemis (data from Dickman Gareta June 2025)
+```{r}
+cd4nhlsdata <- read_dta('~/AHRI data/ARTemis_CD4_V2.dta')
+cd4nhlsdata <- as.data.frame(cd4nhlsdata)
+```
+# Surveillance data set
+# Step 4
+Remove all episodes in which person-time is contributed at age < 15 because only 
+persons 15 and older are eligible for HIV testing
+```{r}
+d1 <- subset(CleanSociodem, Age >= 15)
+
+length(unique(d1$IndividualId))
+# 158730 persons in the full surveillance data set with episodes in which they 
+# were 15 or older
+```
+# Step 4b | STROBE
+How do we go from 220648 to 158730 persons?
+```{r}
+d1_strobe <- subset(CleanSociodem, Age < 15)
+
+length(unique(d1_strobe$IndividualId))
+# 106,236 - the problem with this is that some individuals contributed both 
+# person-time that was under and over 15 
+# 220648-158730 = 61918 persons who did not contribute person-time at age 15 or 
+# older during this time period
+```
+# Step 5
+Restrict to persons who are not missing EarliestARTInitDate
+```{r}
+d2 <- subset(d1, (!is.na(EarliestARTInitDate)))
+
+length(unique(d2$IndividualId))
+# 16905 persons >= age 15 do not have a missing EarliestARTInitDate
+```
+# Step 5b | STROBE
+How do we go from 158730 to 16905 persons?
+```{r}
+# Within the age >=15 data set (before subset to remove persons with missing 
+# EarliestARTInitDate), how many persons have a missing EarliestARTInitDate?
+length(unique(d1$IndividualId[is.na(d1$EarliestARTInitDate)]))
+# 141825 persons have a missing EarliestARTInitDate
+
+158730-141825
+# 16905 persons >= age 15 do not have a missing EarliestARTInitDate
+```
+# Step 6
+Restrict to persons who initiated ART between 01Jan2011 and 31Dec2018
+Note: We selected this time period for FUP because these are the years during 
+which outcome data (ie, viral load) are clean.
+```{r}
+# Within persons with a non-missing EarliestARTInitDate, filter to those with an EarliestARTInitDate between dates 01Jan2011 and 31Dec2018
+d3 <- subset(d2, ((EarliestARTInitDate >= '2011-01-01') & (EarliestARTInitDate <= '2018-12-31')))
+
+length(unique(d3$IndividualId))
+# 10981 persons >= age 15 not missing EarliestARTInitDate AND initiated ART between 01Jan2011 and 31Dec2018
+```
+# Step 6b | STROBE
+How do we go from 16905 to 10981?
+```{r}
+# Within persons with a non-missing EarliestARTInitDate (ie, data set d2), how 
+# many have an EarliestARTInitDate before 01Jan2011?
+length(unique(d2$IndividualId[d2$EarliestARTInitDate < '2011-01-01']))
+# 5890 persons have an EarliestARTInitDate that comes before 01Jan2011
+
+# Within persons with a non-missing EarliestARTInitDate (ie, data set d2), how 
+# many have an EarliestARTInitDate after 31Dec2018?
+length(unique(d2$IndividualId[d2$EarliestARTInitDate > '2018-12-31']))
+# 34 persons have an EarliestARTInitDate that comes after 31Dec2018
+
+16905-5890-34
+# 10981
+16905-10981
+# 5924 persons have an EarliestARTInitDate that comes before or after the 
+# interval 11Jan2011 and 31Dec2018
+```
+# Step 7
+Merge the viral load data set to the surveillance set by 'IndividualId'
+```{r}
+# Rename column in viral load data set from IIntID to IndividualId 
+# (its name in Surveillance)
+vl <- vl %>%
+  rename(IndividualId = IIntID)
+
+# Merge long-format surveillance with long-format viral load data, using the 
+# surveillance data set as the left one (keep all of its rows and add columns 
+# from viral load data set onto them)
+df1 <- left_join(x = d3, y = vl, by = 'IndividualId') 
+```
+# Step 8
+Manipulate merged data set (viral load data and surveillance data set) to retain 
+the variables from the viral load data set with the appropriate rows of the 
+surveillance data set
+```{r}
+df2 <- df1 %>%
+  # do not need to group by IndividualID because the viral load variables are all already in rows with the correct IndividualId
+  # create an indicator variable 'keep' to indicate if the variables from the viral load data set that are included in a given row of the surveillance data set should be kept or not
+  mutate(keep = ifelse(((StartDate <= VisitDate) & (VisitDate <= EndDate)), 1, 0),
+         # if they should be kept, the 
+         VisitDate = ifelse(keep == 1, as.Date(VisitDate), NA), 
+         BMFStatusObservation = ifelse(keep == 1, BMFStatusObservation, NA),
+         HIVSampleId = ifelse(keep == 1, HIVSampleId, NA),
+         VLDetectableLimit = ifelse(keep == 1, VLDetectableLimit, NA),
+         VLResult = ifelse(keep == 1, VLResult, NA),
+         VLResultCode = ifelse(keep == 1, VLResultCode, NA))
+
+class(df2$VisitDate) <- 'Date'
+
+# nrow(df2)
+# 780792
+
+# View(df2[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'BMFStatusObservation', 'HIVSampleId', 'VLDetectableLimit', 'VLResult', 'VLResultCode')])
+```
+# Step 9
+Remove rows in which IndividualId, Episode, and VisitDate are duplicated
+```{r}
+df3 <- distinct(df2, IndividualId, Episode, VisitDate, .keep_all = TRUE) 
+
+nrow(df3)
+# 442258
+
+# View(df3[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'BMFStatusObservation', 'HIVSampleId', 'VLDetectableLimit', 'VLResult', 'VLResultCode')])
+# Note that some episodes are repeated because one row has the viral load variables while the other row is identical EXCEPT for the viral load variables
+```
+# Step 10
+Within episodes (we will group by IndividualId and Episode), we will arrange by 
+VisitDate and keep only the first row of each episode group 
+(ie, the one with the non-missing VisitDate).
+This addresses what we saw in the prior step in which some episodes for a given 
+IndividualId are repeated because one row has the viral load variables while the 
+other row is identical EXCEPT for the viral load variables.
+```{r}
+df4 <- df3 %>%
+  group_by(IndividualId, Episode) %>%
+  arrange(VisitDate) %>%
+  filter(row_number() == 1) %>%
+  arrange(IndividualId, Episode)
+
+length(unique(df4$IndividualId))
+# 10981
+
+# View(df4[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'VisitDate', 'keep', 'BMFStatusObservation', 'HIVSampleId', 'VLDetectableLimit', 'VLResult', 'VLResultCode')])
+```
+# Step 11
+Assign any viral load data from 2016 as missing because the lab values were 
+unusable/off according to Frank Tanser
+```{r}
+df5 <- df4 %>%
+  # No need to group_by(IndividualId) or arrange rows because the viral load variables are all already in rows w/the correct IndividualId
+  # Create an indicator variable to flag if a VisitDate was captured during 2016, the year in which we will set all vl measurements to NA
+  mutate(visit_yr2016 = ifelse(year(VisitDate) == 2016, 1, 0),
+         # If a viral load measurement occurred during 2016, we set all associated viral load variables equal to NA
+         VisitDate = ifelse(visit_yr2016 == 1, NA, as.Date(VisitDate)),
+         BMFStatusObservation = ifelse(visit_yr2016 == 1, NA, BMFStatusObservation),
+         HIVSampleId = ifelse(visit_yr2016 == 1, NA, HIVSampleId),
+         VLDetectableLimit = ifelse(visit_yr2016 == 1, NA, VLDetectableLimit),
+         VLResult = ifelse(visit_yr2016 == 1, NA, VLResult),
+         VLResultCode = ifelse(visit_yr2016 == 1, NA, VLResultCode))
+
+class(df5$VisitDate) <- 'Date'
+
+# print(unique(df5$IndividualId[df5$visit_yr2016 == 1]))
+
+# for example, person 33 episode 56 had a VisitDate during 2016, which we can see in this data set
+# When we look at person 33 episode 56, we see that visit_yr2016 == 1, but all vl variables are NA, which is what we assigned them to be
+length(unique(df5$IndividualId))
+# 10981
+
+# View(df5[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'VisitDate', 'visit_yr2016', 'BMFStatusObservation', 'HIVSampleId', 'VLDetectableLimit', 'VLResult', 'VLResultCode')])
+```
+# Step 12
+Denote VLResultCode as a factor variable, and note what codes indicate
+```{r}
+df5$VLResultCode <- as_factor(df5$VLResultCode)
+
+# df5$VLResultCode_num <- recode(df5$VLResultCode,
+#                            #old = new
+#                            'Valid result' = 1,
+#                            'Below detectable limit' = 2,
+#                            'Invalid result' = 3,
+#                            'Insufficient for testing' = 4,
+#                            'Specimen not found' = 5,
+#                            'Excluded from testing due to insufficient funding or field error' = 6,
+#                            'Other' = 7)
+# df4$VLResultCode_num <- replace_na(df4$VLResultCode_num, 0)
+# View(df5[, c('IndividualId', 'Episode', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'VisitDate', 'VLResultCode')])
+```
+# Step 13
+Identify persons who achieved initial viral suppression before EarliestARTInitDate, so that they can be removed from analytic sample
+```{r}
+df5 <- df5 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # If VisitDate is not missing and occurs before EarliestARTInitDate and the viral load measurement was coded as below detectable limit
+  # We use <= EarliestARTInitDate because we do not allow people to become suppressed on the same date they start ART (just not before)
+  # We do not need to rank the occurrence of VLResultCode==2 because any occurrence disqualifies them from inclusion
+  mutate(suppression_pre_ART = ifelse(((!is.na(VisitDate)) & (VisitDate <= EarliestARTInitDate) & (VLResultCode == 2)), 1, 0)) %>%
+  mutate(total_sup_per_person = length(which(suppression_pre_ART == 1)))
+
+length(unique(df5$IndividualId))
+# 10981 
+
+length(unique(df5$IndividualId[is.na(df5$suppression_pre_ART )]))
+# 0 
+
+# View(df5[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'VisitDate', 'EarliestARTInitDate', 'VLResultCode', 'suppression_pre_ART', 'total_sup_per_person')])
+```
+# Step 14b | STROBE
+How do we go from 10981 to 10739?
+```{r}
+########
+# Before we dropped persons who had the event before EarliestARTInitDate
+########
+
+# How many had had a missing value for the event?
+length(unique(df5$IndividualId[is.na(df5$suppression_pre_ART)]))
+#0
+
+# How many had the event before EarliestARTInitDate?
+length(unique(df5$IndividualId[df5$suppression_pre_ART == 1]))
+#242 had the event before EarliestARTInitDate, before we subset to people who contributed any follow-up time (ie, they have an origin) or subset to people who contributed person-time for the year prior to EarliestARTInitDate
+
+# Consider the break-down of how many instances of suppression pre-ART occurred among persons who had the event before EarliestARTInitDate
+length(unique(df5$IndividualId[df5$total_sup_per_person == 1]))
+# 202
+
+length(unique(df5$IndividualId[df5$total_sup_per_person == 2]))
+# 36
+
+length(unique(df5$IndividualId[df5$total_sup_per_person == 3]))
+# 4
+
+length(unique(df5$IndividualId[df5$total_sup_per_person > 3]))
+# 0
+# 202+36+4=242
+```
+# Step 14
+Retain only the persons who did not have the event before their EarliestARTInitDate
+```{r}
+df6 <- df5 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # retain only the persons who never had the event before EarliestARTInitDate (that we know of)
+  filter(length(which(suppression_pre_ART == 1)) == 0)
+  # remember we have not yet removed the rows that come before EarliestARTInitDate
+
+length(unique(df6$IndividualId))
+# 10739 did not have the event before their EarliestARTInitDate
+
+nrow(df6)
+# 418642
+
+# We can confirm it this way
+df6_confirm <- df5 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # retain only the persons who never had the event before EarliestARTInitDate (that we know of)
+  filter(total_sup_per_person == 0)
+  # remember we have not yet removed the rows that come before EarliestARTInitDate
+
+length(unique(df6_confirm$IndividualId))
+# 10739 did not have the event before their EarliestARTInitDate
+
+# View(df6[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'VisitDate', 'EarliestARTInitDate', 'VLResultCode', 'suppression_pre_ART')])
+```
+##########################
+# Merge CD4 data from NHLS, TIER.net, ARTemis from Dickman Gareta June 2025
+#########################
+# Step 
+First, rename the variables in this data set because it has the same column 
+names as the ARTemis-only CD4 data that we just merged above
+```{r}
+names(cd4nhlsdata) <- c('IndividualId', 'TestDateV2', 'CD4CountV2', 'CD4PctV2', 'DataSourceV2')
+```
+Merge the CD4 count data set to the merged surveillance + viral load set by 'IndividualId'
+```{r}
+# Merge long-format CD4 data with long-format surveillance + viral load data, using the surveillance + viral load data set as the left one (keep all of its rows and add columns from cd4 count data set onto them)
+survvlcd4V2_1 <- left_join(x = df6, y = cd4nhlsdata, by = 'IndividualId')
+
+# many to many merge
+```
+# Step 
+Manipulate merged data set (viral load data + surveillance data set now merged with cd4 data) to retain the variables from the cd4 data set with the appropriate rows of the surveillance + viral data set
+```{r}
+survvlcd4V2_2 <- survvlcd4V2_1 %>%
+  # do not need to group by IndividualID because the cd4 count data variables are all already in rows with the correct IndividualId
+  # create an indicator variable 'keep' to indicate if the variables from the cd4 count data set that are included in a given row of the surveillance + viral data set should be kept or not
+  # Note: TestDate is the variable from the cd4 data that corresponds to when the cd4 count was measured
+  # StartDate and EndDate are the dates that bound the episodes within the surveillance data set (to which viral data are merged)
+  mutate(keepV2 = ifelse(((StartDate <= TestDateV2) & (TestDateV2 <= EndDate)), 1, 0),
+         # if they should be kept (ie, keep == 1), then we keep the variable, 
+         # and if not, then we populate that variable as NA
+         TestDateV2 = ifelse(keepV2 == 1, as.Date(TestDateV2), NA), 
+         CD4CountV2 = ifelse(keepV2 == 1, CD4CountV2, NA),
+         CD4PctV2 = ifelse(keepV2 == 1, CD4PctV2, NA))
+         
+class(survvlcd4V2_2$TestDateV2) <- 'Date'
+
+ nrow(survvlcd4V2_2)
+# 2432605
+
+# View(survvlcd4V2_2[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'VLResult', 'TestDateV2', 'CD4CountV2', 'CD4PctV2')])
+```
+# Step 9
+Remove rows in which IndividualId, Episode, and TestDate are duplicated
+```{r}
+survvlcd4V2_3 <- distinct(survvlcd4V2_2, IndividualId, Episode, TestDateV2, .keep_all = TRUE) 
+
+nrow(survvlcd4V2_3)
+# 444969
+
+# View(survvlcd4V2_3[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'VLResult', 'TestDateV2', 'CD4CountV2', 'CD4PctV2')])
+# Note that some episodes are repeated because one row has the CD4 data variables while the other row is identical EXCEPT for the CD4 data variables
+```
+# Step 10
+Within episodes (we will group by IndividualId and Episode), we will arrange by TestDate and keep only the first row of each episode group (ie, the one with the non-missing TestDate).
+This addresses what we saw in the prior step in which some episodes for a given IndividualId are repeated because one row has the CD4 variables while the other row is identical EXCEPT for the CD4 data variables.
+```{r}
+survvlcd4V2_4 <- survvlcd4V2_3 %>%
+  group_by(IndividualId, Episode) %>%
+  arrange(TestDateV2) %>%
+  filter(row_number() == 1) %>%
+  arrange(IndividualId, Episode)
+
+length(unique(survvlcd4V2_4$IndividualId))
+# 10739
+
+# View(survvlcd4V2_4[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'VLResult', 'TestDateV2', 'CD4CountV2', 'CD4PctV2')])
+```
+# Step
+Create new categorical variable to categorize CD4Count; Matt suggests these 
+cut-offs
+```{r}
+survvlcd4V2_5 <- survvlcd4V2_4 %>%
+  mutate(CD4CountV2 = ifelse(CD4CountV2 >= 1800, NA, CD4CountV2),
+         clinicalstageV2 = case_when(
+                          (is.na(CD4CountV2)) ~ NA,
+                          ((CD4CountV2 >= 500) & (CD4CountV2 < 1800)) ~ '500 or more',
+                          ((CD4CountV2 >= 350) & (CD4CountV2 <= 499)) ~ '350 to 499',
+                          ((CD4CountV2 >= 200) & (CD4CountV2 <= 349)) ~ '200 to 350',
+                          CD4CountV2 < 200 ~ '< 200'))
+
+survvlcd4V2_5$clinicalstageV2 <- as.factor(survvlcd4V2_5$clinicalstageV2)
+
+####
+# Check new clinicalstage variable
+####
+# Within person-periods in which someone is at Stage 1, which is CD4Count >= 500 cells/mm^3
+check_stage500plus <- subset(survvlcd4V2_5, clinicalstageV2 == '500 or more')
+# Returns Tukey's five-number summary
+# min, lower hinge, median, upper hinge, max
+fivenum(check_stage500plus$CD4CountV2)
+# 500  566  655  793 1791
+length(unique(check_stage500plus$CD4CountV2[check_stage500plus$CD4CountV2 >= 1800]))
+# 0 individuals (this was 18 people before we changed anyone with counts >= 1800 to NA)
+
+# Within person-periods in which someone is at Stage 2, which is CD4Count 350 to 499 cells/mm^3
+check_stage350to499 <- subset(survvlcd4V2_5, clinicalstageV2 == '350 to 499')
+# Returns Tukey's five-number summary
+# min, lower hinge, median, upper hinge, max
+fivenum(check_stage350to499$CD4CountV2)
+# 350 384 419 458 499
+
+# Within person-periods in which someone is at CD4Count 200 to 350 cells/mm^3
+check_stage200to350 <- subset(survvlcd4V2_5, clinicalstageV2 == '200 to 350')
+# Returns Tukey's five-number summary
+# min, lower hinge, median, upper hinge, max
+fivenum(check_stage200to350$CD4CountV2)
+# 200 242 279 315 349
+
+# Within person-periods in which someone is at CD4Count < 200 cells/mm^3
+check_stageunder200 <- subset(survvlcd4V2_5, clinicalstageV2 == '< 200')
+# Returns Tukey's five-number summary
+# min, lower hinge, median, upper hinge, max
+fivenum(check_stageunder200$CD4CountV2)
+# 0  61 116 160 199
+
+# Within person-periods in which someone is unknown
+check_stageunk <- subset(survvlcd4V2_5, is.na(clinicalstageV2))
+# Returns Tukey's five-number summary
+# min, lower hinge, median, upper hinge, max
+fivenum(check_stageunk$CD4CountV2)
+# NA NA NA NA NA
+
+#########
+
+# View(survvlcd4V2_5[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'VisitDate', 'VLResult', 'TestDateV2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+```
+# Create window 12 months before EarliestARTInitDate and 3 months after 
+# EarliestARTInitDate to create a grace period for baseline CD4 count
+```{r}
+# Create a flag for 12 months before EarliestARTInitDate
+survvlcd4V2_6 <- survvlcd4V2_5 %>%
+  group_by(IndividualId) %>%
+  mutate(twelvemospriorART = (EarliestARTInitDate - dmonths(12)),
+         threemospostART = (EarliestARTInitDate + dmonths(3)),
+         durationdays_ARTtoCD4V2 = abs(EarliestARTInitDate - TestDateV2))
+
+survvlcd4V2_6$durationdays_ARTtoCD4V2 <- as.numeric(survvlcd4V2_6$durationdays_ARTtoCD4V2)
+
+# View(survvlcd4V2_6[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'twelvemospriorART', 'EarliestARTInitDate', 'threemospostART', 'TestDateV2', 'durationdays_ARTtoCD4V2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+```
+
+```{r}
+survvlcd4V2_7 <- survvlcd4V2_6 %>%
+  filter(((twelvemospriorART <= TestDateV2) & (TestDateV2 <= threemospostART))) 
+
+# View(survvlcd4V2_7[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'twelvemospriorART', 'EarliestARTInitDate', 'threemospostART', 'TestDateV2', 'durationdays_ARTtoCD4V2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+```
+# Identify the CD4 value for each person that is closest to their baseline (their EarliestARTInit date)
+```{r}
+survvlcd4V2_8_test <- survvlcd4V2_7 %>%
+  # Create an indicator variable to indicate the person-period with the minimum
+  # duration_ARTtoCD4
+  mutate(closestCD4toARTinitV2 = ifelse(durationdays_ARTtoCD4V2 == min(durationdays_ARTtoCD4V2), 1, 0),
+         # if there are two CD4 values that are ties for the closestCD4toARTinitV2
+         pick_row = case_when(
+           sum(closestCD4toARTinitV2 == 1) > 1 & TestDateV2 > EarliestARTInitDate ~ 1, 
+           sum(closestCD4toARTinitV2 == 1) == 1 ~ closestCD4toARTinitV2,
+           .default = 0),
+        # if it is the Episode in which the CD4 test result is closest to the
+        # ART initiation (and within the filtered grace period around the 
+        # EarliestARTInit date), then that's the baseline CD4 test
+        base_TestDateV2 = ifelse(pick_row == 1, as.Date(TestDateV2), NA),
+        base_CD4CountV2 = ifelse(pick_row == 1, CD4CountV2, NA),
+        #base_clinicalstageV2 = ifelse(closestCD4toARTinitV2 == 1, as.factor(clinicalstageV2), NA),
+        base_CD4PctV2 = ifelse(pick_row == 1, CD4PctV2, NA),
+        base_clinicalstageV2 = case_when(
+                          (!is.na(base_TestDateV2)) & ((base_CD4CountV2 >= 500) & (base_CD4CountV2 < 1800)) ~ '500 or more',
+                          (!is.na(base_TestDateV2)) & ((base_CD4CountV2 >= 350) & (base_CD4CountV2 <= 499)) ~ '350 to 499',
+                          (!is.na(base_TestDateV2)) & ((base_CD4CountV2 >= 200) & (base_CD4CountV2 <= 349)) ~ '200 to 350',
+                          (!is.na(base_TestDateV2)) & (base_CD4CountV2 < 200) ~ '< 200'))
+
+class(survvlcd4V2_8_test$base_TestDateV2) <- 'Date'
+survvlcd4V2_8_test$clinicalstageV2 <- as.factor(survvlcd4V2_8_test$clinicalstageV2)
+nrow(survvlcd4V2_8_test)
+#7665
+length(unique(survvlcd4V2_8_test$IndividualId))
+# 4342
+
+#View(survvlcd4V2_8_test[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'TestDateV2', 'durationdays_ARTtoCD4V2', 'closestCD4toARTinitV2', 'pick_row', 'base_TestDateV2', 'base_CD4CountV2', 'base_CD4PctV2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+
+#View(survvlcd4V2_8_test[survvlcd4V2_8_test$IndividualId == '66271', c('IndividualId', 'Episode', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'pick_row', 'base_TestDateV2', 'base_CD4CountV2')])
+
+#View(survvlcd4V2_8_test[survvlcd4V2_8_test$IndividualId == '139718', c('IndividualId', 'Episode', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'pick_row', 'base_TestDateV2', 'base_CD4CountV2')])
+```
+Filter to all rows with non-missing baseline CD4 values
+```{r}
+length(unique(survvlcd4V2_8_test$IndividualId))
+# 4342
+
+survvlcd4V2_9 <- survvlcd4V2_8_test %>%
+  filter(!is.na(base_CD4CountV2))
+
+# View(survvlcd4V2_9[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'twelvemospriorART', 'EarliestARTInitDate', 'threemospostART', 'TestDateV2', 'durationdays_ARTtoCD4V2', 'closestCD4toARTinitV2', 'base_TestDateV2', 'base_CD4CountV2', 'base_CD4PctV2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+```
+Restrict to the baseline CD4 variables
+```{r}
+survvlcd4V2_10 <- survvlcd4V2_9 %>%
+  select(IndividualId, durationdays_ARTtoCD4V2, base_TestDateV2, base_CD4CountV2, base_clinicalstageV2, base_CD4PctV2)
+
+# View(survvlcd4V2_10)
+# Note that some people have a CD4Count for a person-time in which they have a NA CD4Pct
+ 
+#View(survvlcd4V2_10[survvlcd4V2_10$IndividualId == '66271', ])
+
+#View(survvlcd4V2_10[survvlcd4V2_10$IndividualId == '139718', ])
+
+```
+Now merge it back
+```{r}
+survvlcd4V2_11 <- left_join(x = survvlcd4V2_5, y = survvlcd4V2_10, by = 'IndividualId')
+
+# View(survvlcd4V2_11[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'TestDateV2', 'durationdays_ARTtoCD4V2', 'base_TestDateV2', 'base_CD4CountV2', 'base_clinicalstageV2', 'base_CD4PctV2', 'CD4CountV2', 'clinicalstageV2', 'CD4PctV2')])
+```
+########################################
+# Remember we called the data set df6 before we went back and merged in the cd4 count data
+# Here, we will substitute survvlcd4_11 for df6, and then continue on with df7, which will now include the fully merged data set with surveillance+viral+cd5
+```{r}
+######
+# After we dropped the persons who had the event before EarliestARTInitDate
+######
+
+length(unique(survvlcd4V2_11$IndividualId[survvlcd4V2_11$suppression_pre_ART == 1]))
+# 0 confirms that we dropped everyone who had the event before EarliestARTInitDate
+
+length(unique(survvlcd4V2_11$IndividualId[survvlcd4V2_11$suppression_pre_ART == 0]))
+# 10739
+
+# Remember we dropped 242 individuals who experienced viral control before EarliestARTInitDate
+# Keep these numbers for the STROBE
+# 10981-242=10739
+```
+# Step 15
+Create origin for each person
+```{r}
+df7 <- survvlcd4V2_11 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create variable to indicate the origin for the survival analysis
+  # Remember: EarliestARTInitDate is not always the same as an episode StartDate 
+  mutate(origin = ifelse(((EarliestARTInitDate >= StartDate) & (EarliestARTInitDate <= EndDate)), 1, 0)) %>%
+  mutate(origins_exists_test = ifelse(sum(origin == 1) > 1, 1, 0)) %>%
+  mutate(origin_exists_test = ifelse(sum(origin == 1) == 1, 1, 0))
+
+# Check that no one has a missing value for origin or origin_exists
+length(unique(df7$IndividualId[is.na(df7$origin)]))
+# 0
+length(unique(df7$IndividualId[is.na(df7$origins_exists_test)]))
+# 0
+length(unique(df7$IndividualId[is.na(df7$origin_exists_test)]))
+# 0
+# No one has NA for any of these variables
+
+# How many people had an origin within their episodes
+length(unique(df7$IndividualId[df7$origin == 1]))
+# 5446
+sum(df7$origin == 1)
+# 5446
+
+# How many people had more than one origin
+length(unique(df7$IndividualId[df7$origins_exists_test == 1]))
+# 0
+
+# Confirm Episode 75 is no longer repeated for IndiviudalId 66271
+#View(df7[df7$IndividualId == '66271' & df7$origin == 1, c('IndividualId', 'Episode', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'base_TestDateV2', 'base_CD4CountV2', 'origin', 'origin_exists_test')])
+
+# How many people had only one origin
+length(unique(df7$IndividualId[df7$origin_exists_test == 0]))
+# 5293
+length(df7$IndividualId[df7$origin == 1])
+# 5446
+# It makes sense that even though we subsetted the data to include people whose 
+# EarliestARTInitDate fell within 2011-2018, there is no guarantee that they 
+# have person-time that extends to that EarliestARTInitDate
+# Remember that EarliestARTInitDate comes from Tier.net. and surveillance and 
+# viral load data come from AHRI
+
+# View(df7[, c('IndividualId', 'Episode', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'origin', 'origin_exists_test')])
+```
+# Step 16
+Subset to persons who have an origin (some amount of FUP time in which they started ART and then could have gotten the outcome)
+```{r}
+df8 <- df7 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  filter(origin_exists_test == 1) 
+
+length(unique(df8$IndividualId[df8$origin_exists_test == 1]))
+# 5446
+length(unique(df8$IndividualId))
+# 5446
+length(unique(df8$IndividualId[df8$origin_exists_test == 0]))
+# 0
+
+# nrow(df8) #means nothing because we still have rows from before EarliestARTInitDate
+# 350484
+
+# View(df8[, c('IndividualId', 'Episode', 'Resident', 'StartDate', 'EarliestARTInitDate', 'EndDate', 'origin', 'origin_exists_test')])
+```
+# Step 16b | STROBE
+How do we go from 10739 to 5446?
+```{r}
+length(unique(df7$IndividualId[df7$origin_exists_test == 1]))
+# 5446 persons had an origin included in their person-time
+
+length(unique(df7$IndividualId[df7$origin_exists_test == 0]))
+# 5293 persons did not have person-time during the follow-up period
+
+# 10739-5293
+# 5446 persons had an origin within their person-time during the FUP period
+```
+# Step 17
+Create indicator of person-time 1 year prior to EarliestARTInitDate
+```{r}
+# Calculate one year prior to EarliestARTInitDate
+df9 <- df8 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create a variable to identify the date 12 months prior to EarliestARTInitDate
+  mutate(oneyr_preART_date = EarliestARTInitDate %m-% days(365),
+        # Create an indicator to flag the episode that contains the start of that 12-month period
+        oneyr_preART_start = ifelse(((oneyr_preART_date >= StartDate) & (oneyr_preART_date <= EndDate)), 1, 0),
+        # Create a time invariant variable to indicate if someone has an exposure start 
+        oneyr_preART_start_exist = ifelse(length(which(oneyr_preART_start == 1)) == 1, 1, 0)) 
+
+length(unique(df9$IndividualId[df9$oneyr_preART_start_exist == 1]))
+# 5052 persons have person-time a year prior to their EarliestARTInitDate
+
+length(unique(df9$IndividualId[df9$oneyr_preART_start_exist == 0]))
+# 394 persons have no exposure start indicator 
+```
+# Step 18
+Restrict to persons who had person-time 1 year prior to their EarliestARTInitDate
+```{r}
+df10 <- df9 %>% 
+  # Now restrict analytic sample to persons who had person-time a year before they initiated ART
+  filter(oneyr_preART_start_exist == 1) 
+
+length(unique(df10$IndividualId))
+# 5052
+
+# Check if everyone within the subset has either a value 1 or 0 for a migration history start (important because if you omit '=' from '>=' above for filtering by EndDate, it changes this)
+length(df10$IndividualId[df10$oneyr_preART_start == 1])
+# 5052
+length(unique(df10$IndividualId[df10$oneyr_preART_start_exist == 0]))
+# 0 persons have no migration history start indicator because we have filtered to those who have one
+
+print(df10$IndividualId[df10$oneyr_preART_start_exist == 1 & sum(df10$oneyr_preART_start) < 1])
+# no results - also what we expect and need here
+
+# View(df10[, c('IndividualId', 'Episode', 'EarliestARTInitDate', 'StartDate', 'oneyr_preART_date', 'oneyr_preART_start', 'EndDate', 'oneyr_preART_start_exist')])
+```
+# Step 18b | STROBE
+How do we go from 5446 to 5052?
+```{r}
+# Using data from before we restricted to persons who had person-time that contains the date that is 12 months before EarliestARTInitDate
+length(unique(df9$IndividualId[df9$oneyr_preART_start_exist == 1]))
+# 5052 persons have person-time a year prior to their EarliestARTInitDate
+
+length(unique(df9$IndividualId[df9$oneyr_preART_start_exist == 0]))
+# 394 persons do not have person-time that contains the date that is 12 months before EarliestARTInitDate 
+
+# 5446-394
+# 5052 persons have person-time a year prior to their EarliestARTInitDate
+```
+# Step 19
+Create indicator to flag person-time 1 day prior to EarliestARTInitDate
+```{r}
+df11 <- df10 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create end of one-year pre-ART person-time as one day before EarliestARTInitDate
+  mutate(oneday_preART_date = (ymd(EarliestARTInitDate) - days(1)),
+        # Create indicator to flag the episode with the end of the 1-year person-time before EarliestARTInitDate
+        oneday_preART_end = ifelse(((oneday_preART_date >= StartDate) & (oneday_preART_date <= EndDate)), 1, 0),
+        oneday_preART_end_exist = ifelse((length(which(oneday_preART_end == 1)) == 1), 1, 0),
+        # Calculate the elapsed time between each person's start and end date of one year prior to EarliestARTInit
+        oneyr_preART_duration_days = ((oneyr_preART_date %--% oneday_preART_date) %/% days(1)))
+  
+# Confirm we have isolated one year of person-time pre-ART
+summary(df11$oneyr_preART_duration_days)
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   #  364     364     364     364     364     364 
+
+length(unique(df11$IndividualId))
+# 5052
+length(unique(df11$IndividualId[df11$oneyr_preART_start == 1]))
+# 5052
+length(unique(df11$IndividualId[df11$oneyr_preART_start_exist == 1]))
+# 5052
+length(unique(df11$IndividualId[df11$oneday_preART_end == 1]))
+# 5052
+length(unique(df11$IndividualId[df11$oneday_preART_end_exist == 1]))
+# 5052
+
+# View(df11[ , c('IndividualId', 'Episode', 'StartDate', 'oneyr_preART_date', 'oneday_preART_end_date', 'EndDate', 'oneyr_preART_start', 'oneyr_preART_start_exist', 'oneday_preART_end', 'oneday_preART_end_exist')])
+```
+# Step 20
+Create migration history covariate by calculating the number of migration events during the year prior to EarliestARTInitDate
+```{r}
+df12 <- df11 %>% 
+  group_by(IndividualId) %>% 
+  arrange(IndividualId, Episode) %>%
+  # Filter to episodes that fall within one year of person-time before EarliestARTInit
+  # Use >= and <= as the operators below, respectively, because some persons have their oneyr_preART_date such that the episode is only 1 day in duration (in which case, StartDate, oneyr_preART_date, and EndDate are all the same). 
+  filter((EndDate >= oneyr_preART_date) & (EndDate <= oneday_preART_date) & (oneyr_preART_start_exist == 1) & (oneday_preART_end_exist == 1)) %>%
+  # Create summary of median household SEIdx during the year before ART start (one-year history of SEIdx before ART start)
+  # Include na.rm = TRUE so that we drop the NAs from the observations during that year before calculating the median (we cannot calculate the median of a set of numbers that includes NA values)
+  mutate(SEIdx_hx = median(SEIdx, na.rm = TRUE)) %>%
+  # Create flag for instances in which Resident==1 is followed by Resident==0, indicating an out-migration event
+  mutate(outmig_hx_flag = if_else(((Lag(Resident) == 1) & (Resident == 0)), 1, 0, 0),
+  # Exposure history definition 1: frequency of out-migration events per person
+        outmig_hx_freq = length(which(outmig_hx_flag == 1)),
+  # Exposure history definition 2: pattern of out-migration per person
+        outmig_hx_freq_cat = case_when(
+            # always out-migrant
+              # If someone has 0 episodes in which they are home (Resident == 1); they are never home, and always an out-migrant
+            length(which(Resident == 1)) == 0 ~ 2, 
+            # sometimes out-migrant
+              # If someone has 1 or more out-migration event flags, they are out-migrating >= times that year
+            (length(which(outmig_hx_flag == 1)) >= 1) ~ 1,
+            # never out-migrant (always permanent resident, non-migrant)
+              # If someone has Resident == 1 for all episodes within this time frame OR zero out-migration events (eg, 0, 0, 1)
+            ((length(which(Resident == 1)) == length(IndividualId)) | (length(which(outmig_hx_flag == 1)) == 0)) ~ 0
+        )
+  )
+            
+# View(df12[, c('IndividualId', 'Episode', 'Resident', 'oneyr_preART_start', 'oneday_preART_end', 'outmig_hx_flag', 'outmig_hx_freq', 'outmig_hx_freq_cat', 'SEIdx', 'SEIdx_hx', 'StartDate', 'EndDate', 'VisitDate', 'oneyr_preART_start_exist', 'oneday_preART_end_exist')])
+ 
+# Note: SEIdx_hx variable, designed to take the median of all SEIdx in the year before
+ # ART initiation, so that we can carry it forward as baseline SEIdx in cases in which 
+ # SEI is missing at baseline - this variable doesn't solve all problems because
+ # there may be some individuals (like IndividualId==980) who are missing SEIdx
+ # for the entirety of the year before ART start
+```
+# Step 21
+Within this filtered data frame with the migration variables, retain only the IndividualId, migration frequency history variable, and migration pattern history variable, plus the new SEIdx history variable (time-invariant baseline covariates)
+```{r}
+df13 <- df12 %>%
+  select(IndividualId, outmig_hx_freq, outmig_hx_freq_cat, SEIdx_hx)
+
+# View(df13)
+```
+# Step 22
+Within the filtered data frame with the migration variables, retain only unique rows 
+-Note that the migration frequency history variable and migration pattern history variables are time-invariant by definition, so we only need one value per IndividualId
+-Want one row per IndividualId in order to do a one-to-many merge by IndividualId
+```{r}
+# We want to keep all variables in this data set
+df14 <- distinct(df13, .keep_all = TRUE)
+# View(df14)
+```
+# Step 22
+Left-join the surveillance data set (x=pre-filter data frame) to this filtered data frame with the migration history variable (y=migration history variable data frame) by IndividualId
+```{r}
+df15 <- left_join(x = df11, y = df14, by = 'IndividualId')
+# View(df15)
+# View(df15[, c('IndividualId', 'Episode', 'Resident', 'oneyr_preART_start', 'oneday_preART_end', 'outmig_hx_freq', 'outmig_hx_freq_cat', 'SEIdx', 'SEIdx_hx', 'StartDate', 'EndDate', 'VisitDate', 'oneyr_preART_start_exist', 'oneday_preART_end_exist')])
+```
+# Step 23
+Select only columns we need moving forward
+```{r}
+df16 <- df15 %>%
+  select(IndividualId, Episode, LocationId, StartDate, EndDate, Resident, EarliestARTInitDate, DoD, Died, Age, SEIdx, SEIdx_hx, Sex, edu, marital, ChildNumber, oneyr_preART_start, oneday_preART_end, outmig_hx_freq, outmig_hx_freq_cat, VisitDate, BMFStatusObservation, HIVSampleId, VLDetectableLimit, VLResult, VLResultCode, TestDateV2, CD4CountV2, clinicalstageV2, CD4PctV2, base_TestDateV2, base_CD4CountV2, base_clinicalstageV2, base_CD4PctV2, durationdays_ARTtoCD4V2, suppression_pre_ART, origin, origin_exists_test, elapsed.time, Year, Cause1, Lik1, Cause2, Lik2, Cause3, Lik3, ImmediateCause, UnderlyingCause, AssociatedCause1, AssociatedCause2, LostToFollowUp, Refusal, Education, MaritalStatus)
+```
+# Step 24
+Create an indicator to flag when someone's VisitDate occurred before someone's EarliestARTInitDate
+```{r}
+df17 <- df16 %>%
+  group_by(IndividualId, VisitDate) %>%
+  arrange(IndividualId, Episode) %>%
+  mutate(drop_visit = ifelse(VisitDate <= EarliestARTInitDate, 1, 0))
+# View(df17[, c('IndividualId', 'Episode', 'Resident', 'StartDate', 'EndDate', 'VisitDate', 'EarliestARTInitDate', 'drop_visit')])
+```
+# Step 25
+Set any VisitDates that came before or on EarliestARTInitDate == NA so that they cannot be evaluated for events 
+-We already removed people who had the event pre-EarliestARTInitDate
+```{r}
+df18 <- df17 %>%
+  mutate(VisitDate = ifelse(drop_visit == 1, NA, VisitDate), 
+         BMFStatusObservation = ifelse(drop_visit == 1, NA, BMFStatusObservation), 
+         HIVSampleId = ifelse(drop_visit == 1, NA, HIVSampleId), 
+         VLDetectableLimit = ifelse(drop_visit == 1, NA, VLDetectableLimit), 
+         VLResult = ifelse(drop_visit == 1, NA, VLResult),
+         VLResultCode = ifelse(drop_visit == 1, NA, VLResultCode)
+         )
+
+class(df18$VisitDate) <- 'Date'
+# View(df18[, c('IndividualId', 'Episode', 'Resident', 'StartDate', 'EndDate', 'VisitDate', 'EarliestARTInitDate', 'drop_visit')])
+
+# Check that every row which was flagged as having a VisitDate before EarliestARTInitDate now has VisitDate == NA
+# testing <- subset(df18, drop_visit == 1)
+# View(testing[, c('IndividualId', 'Episode', 'Resident', 'StartDate', 'EndDate', 'VisitDate', 'EarliestARTInitDate', 'drop_visit')])
+# length(which(!is.na(testing$VisitDate)))
+# 0 persons have a non-missing VisitDate if the VisitDate was flagged as occurring before EarliestARTInitDate
+
+# Check another way
+# test <- df18 %>%
+#   group_by(IndividualId) %>%
+#   arrange(IndividualId, Episode) %>%
+#   mutate(error = ifelse((!is.na(VisitDate))&(!is.na(EarliestARTInitDate))&(VisitDate <= EarliestARTInitDate), 1, 0))
+# 
+# length(unique(test$IndividualId[test$error == 1]))
+# 0
+```
+# Step 26
+Create binary viral suppression variable
+```{r}
+df19 <- df18 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # str(df18$VLResultCode) confirms that there are 7 levels, as indicated in the data dictionary
+  # Leave NAs as NA because we do not want to collapse viral failure values with NAs (ie, do not replace NAs with 0s) 
+  # Create a binary variable to distinguish a viral result that shows suppression versus one that does not
+  mutate(suppression = if_else(VLResultCode == 2, 1, 0, NA_real_)) 
+
+length(unique(df19$IndividualId))
+# 5052
+# View(df19[, c('IndividualId', 'Episode', 'origin', 'VisitDate', 'EarliestARTInitDate', 'VLResultCode', 'suppression', 'StartDate', 'EndDate')])
+```
+# Step 27
+Create binary initial viral suppression variable
+```{r}
+df20 <- df19 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create a flag for each time suppression == 1
+  mutate(suppression_flag = if_else(suppression == 1, 1, NA_real_, NA_real_),
+  # Rank the flags for each time suppression == 1
+  # We 1) rank only the suppression == 1 values, 2) keep NAs as NA (do not rank NAs) 3) give a rank of 0 to all suppression == 0 values
+        suppression_rank = ifelse(suppression == 1, rank(suppression_flag, na.last = 'keep', ties.method = 'first'), NA_real_),
+  # Create binary event variable to indicate initial viral suppression
+        event_initsup = case_when(
+                # Initial viral suppression is the event
+                suppression_rank == 1 ~ 1,
+                # Viral failure, or viral suppression that occurs after the initial suppression is not an event
+                ((suppression == 0) | (suppression_rank > 1)) ~ 0
+  )
+  )
+  
+ length(unique(df20$IndividualId))
+# 5052
+dim(df20)
+#  343260     59
+# View(df20[, c('IndividualId', 'Episode', 'origin', 'VisitDate', 'EarliestARTInitDate', 'VLResultCode', 'suppression', 'suppression_flag', 'suppression_rank', 'event_initsup')])
+```
+# Step 28
+Create assessment_date, defined as EarliestARTInitDate when an episode contains the origin, which is EarliestARTInitDate, and as the VisitDate when we have a VisitDate
+```{r}
+# df21 <- df20 %>%
+#   group_by(IndividualId) %>%
+#   arrange(IndividualId, Episode) %>%
+#   # Create an assessment date that is the date of EarliestARTInitDate and then any VisitDates (we are counting all as 'assessments')
+#   mutate(assessment_date = case_when(
+#     # If VisitDate is missing and an episode contains the origin, which is EarliestARTInitDate, assessment_date == EarliestARTInitDate
+#     ((is.na(VisitDate)) & (origin == 1)) ~ EarliestARTInitDate,
+#     # If VisitDate is not missing, assessment_date == VisitDate
+#     !is.na(VisitDate) ~ VisitDate))
+# 
+# class(df21$assessment_date) <- 'Date'
+
+# length(unique(df21$IndividualId))
+# 5052
+
+# View(df21[, c('IndividualId', 'Episode', 'origin', 'VisitDate', 'EarliestARTInitDate', 'event_initsup', 'assessment_date')])
+```
+# Step 29
+Create assessment_rank to rank the assessment_date 
+```{r}
+# df22 <- df21 %>%
+#   group_by(IndividualId) %>%
+#   arrange(IndividualId, Episode) %>%
+#   # Create a flag to indicate if a row contains the assessment date (if it is part of the person-assessment backbone)
+#   # If the assessment_date falls within a given episode, we flag that episode as being part of the person-assessment backbone
+#   mutate(backbone_flag = ifelse(((StartDate <= assessment_date) & (EndDate >= assessment_date)), 1, NA),
+#     # Create assessment_rank to number the assessments within a given person
+#     # If a person-assessment has been flagged as falling within an episode (ie, backbone_flag == 1), we count the number of flags
+#     assessment_rank = ifelse(((backbone_flag == 1) & (!is.na(backbone_flag))), rank(backbone_flag, na.last = TRUE, ties.method = 'first'), NA))
+  
+# length(unique(df22$IndividualId))
+# 5052
+
+# View(df22[, c('IndividualId', 'Episode', 'origin', 'VisitDate', 'EarliestARTInitDate', 'event_initsup', 'assessment_date', 'backbone_flag', 'assessment_rank')])
+```
+Explore data on earliest known ART initiation, and how many participants started before/after UTT
+```{r}
+# check what proportion of participants started ART before UTT policy was put into place 
+# officially rolled out Sept 01, 2016 per publication
+df21 <- df20 %>%
+  # Create binary variable to indicate if someone initiated before UTT
+  mutate(EarliestARTInitPreUTT = as.factor(ifelse(as.Date(EarliestARTInitDate, '%Y/%m/%d') < as.Date('2016-09-01'), 1, 0)),
+         # Create variable to indicate year of someone's ART initiation
+         EarliestARTInitYear = year(EarliestARTInitDate))
+
+# Check distribution of year of EarliestARTInitDate
+df21_baseline <- df21 %>%
+  group_by(IndividualId) %>%
+  slice_head(n = 1)
+
+sum(is.na(df21_baseline$EarliestARTInitYear))
+# 0
+
+####
+# Explore data to get counts for bar chart
+####
+table(df21_baseline$EarliestARTInitYear, exclude = NULL)
+# 2011 2012 2013 2014 2015 2016 2017 2018 
+# 953  934  805  849 1045  374   29   63 
+
+sum((df21_baseline$EarliestARTInitYear == 2016) & (df21_baseline$EarliestARTInitPreUTT == 1))
+# 346 individuals started ART in 2016 before Sept 01, 2016
+
+sum((df21_baseline$EarliestARTInitYear == 2016) & (df21_baseline$EarliestARTInitPreUTT == 0))
+# 28 individuals start ART in 2016 on or after Sept 01, 2016
+
+# raw data from above
+year <- c(2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018)
+count <- c(953, 934, 805, 849, 1045, 374, 29, 63)
+
+# We can see what the histogram should look like, when we clean it up below
+hist(df21_baseline$EarliestARTInitYear)
+
+# Create data frame for stacked bar chart of distribution of ART initiation
+year <- c(2011, 2011, 2012, 2012, 2013, 2013, 2014, 2014, 2015, 2015, 2016, 2016, 2017, 2017, 2018, 2018)
+count <- c(953, 0, 934, 0, 805, 0, 849, 0, 1045, 0, 346, 28, 0, 29, 0, 63)
+preUTT <- rep(c("Pre-Universal Test & Treat Policy", "Post-Universal Test & Treat Policy"), 8)
+data_graph <- data.frame(year, count, preUTT)
+data_graph$preUTT <- factor(data_graph$preUTT, levels = c('Pre-Universal Test & Treat Policy', 'Post-Universal Test & Treat Policy'))
+
+# Create stacked bar chart of distribution of ART initiation
+Fig_ARTInit <- ggplot(data = data_graph, 
+                      aes(x = year,
+                          y = count,
+                          fill = preUTT)) +
+                geom_bar(position = 'stack', stat = 'identity', width = .8) + 
+                labs(x = 'Year of earliest known antiretroviral therapy initiation', 
+                     y = str_wrap('Number of participants', width = 10)) + 
+                theme_light() +
+                # Set limits and intervals for x- and y-axes
+                scale_x_continuous(limits = c(2011, 2018), 
+                                   breaks = seq(from=2011, to=2018, by=1),
+                                    oob = rescale_none) +
+                scale_fill_manual(values = c('#D72000FF', '#FFAD0AFF')) +
+                # scale_fill_paletteer_d('LaCroixColoR::Apricot') +
+                theme(legend.position = 'bottom',
+                      legend.title = element_blank(),
+                      text = element_text(family = "Times New Roman"),
+                      axis.title.y = element_text(angle = 0, vjust = 0.5, 
+                      # Add space between y-axis label and y-axis                       
+                      margin = margin(t = 0, r = 10, b = 0, l = 0)),
+                      axis.title.x = element_text(
+                        margin = margin(t = 10, r = 0, b = 0, l = 0))) 
+Fig_ARTInit
+```
+# Step 30
+Subset to baseline (ie, time of ART initiation) observations for Table 1
+```{r}
+# Subset to the origin row for each person (ie, at EarliestARTInitDate)
+# It's okay if this row contains person-time before EarliestARTInitDate because the covariates have not changed within that episode by definition
+baseline <- subset(df21, origin == 1)
+
+# length(unique(baseline$IndividualId))
+# 5052
+
+# length(baseline$IndividualId[baseline$origin == 1])
+# 5052
+
+# View(baseline[, c('IndividualId', 'Episode', 'origin', 'outmig_hx_freq', 'outmig_hx_freq_cat', 'Age', 'Sex', 'edu', 'marital', 'SEIdx', 'event_initsup')])
+```
+Code to use for exporting list of individuals in order to pull their CD4 count data
+```{r}
+#sample <- subset(baseline, select = c('IndividualId', 'EarliestARTInitDate'))
+#sample <- as.data.frame(sample)
+#write_xlsx(sample, 'Table_migration_mortality_study_sample.xlsx')
+```
+# Step 31
+Create Table 1 of baseline (ie, time of ART initiation) sociodemographic characteristics
+```{r}
+baseline$ChildNumber <- as.numeric(baseline$ChildNumber)
+baseline$outmig_hx_freq_cat <- as.factor(baseline$outmig_hx_freq_cat)
+baseline$Sex <- droplevels(baseline$Sex)
+
+table1 <- CreateTableOne(vars = c('Age', 'edu', 'marital', 'SEIdx', 'ChildNumber', 'outmig_hx_freq_cat', 'SEIdx_hx'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+table1 <- print(table1, showAllLevels = TRUE, includeNA = TRUE)
+table1 <- as.data.frame(table1)
+write_xlsx(table1, 'Table 1_SociodemographicCharacteristics.xlsx')
+```
+Check distributions of variables that have baselinemissingness
+```{r}
+table_baseline_edu <- CreateTableOne(vars = c('Education', 'edu'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+table_baseline_edu
+```
+
+```{r}
+table_baseline_sei <- CreateTableOne(vars = c('SEIdx', 'SEIdx_hx'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+print(table_baseline_sei, nonnormal = c('SEIdx', 'SEIdx_hx'))
+
+sum(is.na(baseline$SEIdx))
+# 289/5052 = 5.7%
+
+fivenum(baseline$SEIdx)
+```
+
+```{r}
+table_baseline_cohab <- CreateTableOne(vars = c('MaritalStatus', 'marital'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+table_baseline_cohab
+```
+
+```{r}
+table_baseline_cd4 <- CreateTableOne(vars = c('base_CD4CountV2', 'base_clinicalstageV2'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+print(table_baseline_cd4, nonnormal = c('base_CD4CountV2'))
+
+fivenum(baseline$base_CD4CountV2)
+```
+Create Table 2 of baseline (ie, time of ART initiation) clinical characteristics
+```{r}
+table2 <- CreateTableOne(vars = c('EarliestARTInitPreUTT', 'durationdays_ARTtoCD4V2', 'base_clinicalstageV2', 'base_CD4CountV2', 'base_CD4PctV2'), strata = 'Sex', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+table2 <- print(table2, nonnormal = c('durationdays_ARTtoCD4V2', 'base_CD4CountV2', 'base_CD4PctV2'), showAllLevels = TRUE, includeNA = TRUE)
+table2 <- as.data.frame(table2)
+write_xlsx(table2, 'Table 2_ClinicalCharacteristics.xlsx')
+```
+Missingness for clinical characteristics
+```{r}
+# CD4Count
+length(which(is.na(baseline$base_CD4CountV2)))
+# 711
+length(which(is.na(baseline$base_CD4CountV2) & (baseline$Sex == 'Male')))
+# 152
+length(which(is.na(baseline$base_CD4CountV2) & (baseline$Sex == 'Female')))
+# 559
+length(which(!is.na(baseline$base_CD4CountV2)))
+# 4341
+
+# TestDate
+length(which(is.na(baseline$base_TestDateV2)))
+# 711
+length(which(is.na(baseline$base_TestDateV2) & (baseline$Sex == 'Male')))
+# 152
+length(which(is.na(baseline$base_TestDateV2) & (baseline$Sex == 'Female')))
+# 559
+length(which(!is.na(baseline$base_TestDateV2)))
+# 4341
+
+# duration
+length(which(is.na(baseline$durationdays_ARTtoCD4V2)))
+# 711
+length(which(is.na(baseline$durationdays_ARTtoCD4V2) & (baseline$Sex == 'Male')))
+# 152
+length(which(is.na(baseline$durationdays_ARTtoCD4V2) & (baseline$Sex == 'Female')))
+# 559
+length(which(!is.na(baseline$durationdays_ARTtoCD4V2)))
+# 4341
+
+# CD4Pct
+length(which(is.na(baseline$base_CD4PctV2)))
+# 3836
+length(which(is.na(baseline$base_CD4PctV2) & (baseline$Sex == 'Male')))
+# 1060
+length(which(is.na(baseline$base_CD4PctV2) & (baseline$Sex == 'Female')))
+# 2776
+length(which(!is.na(baseline$base_CD4PctV2)))
+# 1216
+```
+
+Alternative Table 1, stratified by out-migration history, of baseline (ie, time of ART initiation) sociodemographic characteristics
+```{r}
+baseline$ChildNumber <- as.numeric(baseline$ChildNumber)
+
+t <- CreateTableOne(vars = c('Age', 'Sex', 'edu', 'marital', 'SEIdx', 'ChildNumber'), strata = 'outmig_hx_freq_cat', data = baseline, includeNA = TRUE, addOverall = TRUE)
+
+t <- print(t, showAllLevels = TRUE, includeNA = TRUE)
+t <- as.data.frame(t)
+write_xlsx(t, 'Table 1_SociodemographicsByMigrationHx.xlsx')
+```
+Summarise baseline CD4 values
+```{r}
+table(baseline$base_CD4CountV2)
+```
+# Step 32
+Save the data frame with clean sociodemographic data for those retained within the analytic sample
+```{r}
+Step02AnalyticSample <- df21
+save(Step02AnalyticSample, file = '02_AnalyticSample.Rdata')
+```

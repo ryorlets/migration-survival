@@ -1,0 +1,318 @@
+---
+title: "Step03_Cont-DiscreteManipulation"
+author: "Rachel Yorlets"
+date: "10/13/2022"
+output: html_document
+---
+
+# Step 
+Load packages
+```{r}
+pacman::p_load(lubridate,  # date
+               dplyr,      # case_when()
+               #tidyr,     # unnest
+               tidyverse   # map2()
+               )
+```
+# Step 3
+Load data: 02_AnalyticSample.Rdata
+```{r}
+load('02_AnalyticSample.Rdata') 
+#	Origin: Created by running Step2 coding file of the same name
+#	Description: Participants included in the analytic data set (n=5052) 
+# 	Rows: All rows for all persons in the analytic sample
+# 	Columns: Clean sociodemographic variables and viral load variables
+```
+# Step 4
+Rename 02_AnalyticSample to something more reasonable
+```{r}
+d1 <- Step02AnalyticSample
+
+# Save memory
+Step02AnalyticSample <- NULL
+```
+# Step 5
+Calculate time elapsed during each episode
+```{r}
+d1$elapsed.time_mos <- (d1$StartDate %--% d1$EndDate)/dmonths()
+
+# length(unique(d1$IndividualId))
+# 5052
+
+# nrow(d1)
+# 343260
+
+# View(d1[, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'elapsed.time_mos')])
+```
+# Step 6
+Create a new time-invariant variable that marks the end of an individual's person-time (i.e., max(EndDate)
+```{r}
+d2 <- d1 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Calculate the end date of person-time for each person as their maximum EndDate
+  mutate(EndDate_PT = max(EndDate))
+
+# length(unique(d2$IndividualId))
+# 5052
+
+# nrow(d2)
+# 343260
+
+# View(d2[, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EndDate_PT', 'elapsed.time_mos')])
+```
+# Step 7
+Create 6-month assessments by calculating 6-month intervals starting from EarliestARTInitDate and ending in the 6-month period around max(EndDate)
+- Edited from a solution from a reprex I posted to StackOverflow: https://stackoverflow.com/questions/74061655/how-to-create-a-time-varying-date-interval-variable-bounded-by-a-single-start-an
+```{r}
+d3 <- d2 %>% 
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # Create the IntervalStart date by adding 6 months to the EarliestARTInitDate repeatedly
+  # Use map2() from tidyverse: https://purrr.tidyverse.org/reference/map2.html
+  mutate(IntervalStart = map2(EarliestARTInitDate, EndDate_PT, seq, by = '6 months')) %>%
+  unnest(IntervalStart) %>% 
+  group_by(IndividualId, Episode) %>%
+  # Create the IntervalEnd date
+  # If this is someone's last row (ie, they are missing the next IntervalStart value), we can either still calculate the end of a full 6-month interval, OR we could substitute (IntervalStart %m+% months(6)) with 'EndDate_PT' below if we want to end it at the exact end of PT
+  mutate(IntervalEnd_6mos = case_when(is.na(lead(IntervalStart)) ~ (IntervalStart %m+% months(6)),
+         # If this is not the IntervalEnd for someone's last row, we can subtract 1 day from the prior IntervalStart
+                                 TRUE ~ lead(IntervalStart) - 1),
+         # Let's also create the version of the IntervalEnd that ends with the end of person-time so that we can later match this date (EndDate_PT) to a row in which it falls (whereas the date that falls at the full end of the 6 months will likely come after the end of person-time, so it wouldn't match a visit to a row based on that)
+         IntervalEnd_PT = case_when(is.na(lead(IntervalStart)) ~ EndDate_PT,
+                          # If this is not the IntervalEnd for someone's last row, we can subtract 1 day from the prior IntervalStart
+                                 TRUE ~ lead(IntervalStart) - 1))
+
+# length(unique(d3$IndividualId))
+# 5052
+
+# nrow(d3)
+# 3262958
+ 
+# View(d3[d3$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_6mos', 'IntervalEnd_PT', 'elapsed.time_mos')])
+
+# this person has a missing weight as of now at the end - why? missing person-time?
+# View(d3[d3$IndividualId == 20504, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_6mos', 'IntervalEnd_PT', 'elapsed.time_mos')])
+
+# Note we have all intervals (start and end) repeated for every Episode for each IndividualId
+```
+# Step 8
+Create a new variable 'VisitDate_DoD' that is the same as 'IntervalEnd_6mos'
+```{r}
+d4 <- d3 %>%
+  mutate(VisitDate_DoD = IntervalEnd_6mos)
+
+# Confirm VisitDate_DoD is a Date
+class(d4$VisitDate_DoD)
+
+# View(d4[d4$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# View(d4[d4$IndividualId == 20504, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+# They have gaps in their person-time, so there are visits that never get placed
+
+# Note we have all intervals (start and end) repeated for every Episode for each IndividualId
+```
+# Step 9
+Retain each 'VisitDate_DoD' (ie, 6 month interval) with the appropriate row of the surveillance data set
+```{r}
+d5 <- d4 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, Episode) %>%
+  # We would normally think about if a VisitDate_DoD falls between the StartDate and EndDate of an Episode, retain the VisitDate_DoD; else VisitDate_DoD is NA
+  # But because VisitDate_DoD == IntervalEnd_6mos, we know it's unlikely that IntervalEnd_6mos == IntervalEnd_PT for the very last episode for a given person, so we put a VisitDate_DoD within a given row if the IntervalEnd_PT falls within the episode StartDate/EndDate so that we can be sure we include this last VisitDate_DoD period, which will be the period, by definition, in which death occurs
+  mutate(VisitDate_DoD = ifelse(((StartDate <= IntervalEnd_PT) & (IntervalEnd_PT <= EndDate)), as.Date(VisitDate_DoD), NA))
+
+# Confirm VisitDate_DoD is a Date
+class(d5$VisitDate_DoD) <- 'Date'
+
+# View(d5[d5$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# View(d5[d5$IndividualId == 20504, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+############# 
+# Look at episodes in which the duration is >= 6 months because we want to be sure we are keeping both visits if there are 2 within an episode
+# Reference documentation - remember that episodes cannot last > 12 months because they change with age and they cannot cross years (ie, start in one year and end in another)
+# check <- d5 %>%
+#  filter((!is.na(VisitDate_DoD)) & (elapsed.time_mos >= 6))
+# 
+#  View(check[, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# Note we have all intervals (start and end) repeated for every Episode for each IndividualId
+# For example, look at person 214, who has two episodes 58 because two visits occur within it
+# Note that not every interval that has a duration > 6 months has two visits within it, so not every interval like this is duplicated
+```
+# Step 10
+Remove rows in which IndividualId, Episode, and VisitDate_DoD are duplicated
+```{r}
+d6 <- distinct(d5, IndividualId, Episode, VisitDate_DoD, .keep_all = TRUE) 
+
+# length(unique(d6$IndividualId))
+# 5052
+
+# nrow(d6)
+# 387702
+
+# View(d6[d6$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# View(d6[d6$IndividualId == 20504, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# View(d6[d6$IndividualId == 231393, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# Note that all episodes that contain a VisitDate_DoD between the StartDate and EndDate are repeated because one row has the VisitDate_DoD variable while the other row is identical EXCEPT for the VisitDate_DoD variable
+```
+# Create backbone of visits by selecting only rows that contain a visit date within them
+```{r}
+backbone_visits <- subset(d6, !is.na(VisitDate_DoD))
+
+# length(unique(backbone_visits$IndividualId))
+# 5052
+
+# nrow(backbone_visits)
+# 44761
+
+# View(backbone_visits[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+
+# View(backbone_visits[backbone_visits$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'EndDate_PT', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'VisitDate_DoD', 'elapsed.time_mos')])
+```
+# Refine the backbone by selecting only the columns needed within it
+```{r}
+backbone_outcomes1 <- backbone_visits %>%
+  # Keep EndDate because the EndDate associated with the person-assessment in which the visit occurs can help us doing the total time calculation for both people who are ultimately censored and who ultimately die
+  select(IndividualId, Episode, EarliestARTInitDate, EndDate, EndDate_PT, IntervalStart, IntervalEnd_PT, IntervalEnd_6mos, VisitDate_DoD, DoD, elapsed.time_mos, LostToFollowUp, Refusal, Cause1, Lik1, Cause2, Lik2, Cause3, Lik3, ImmediateCause, UnderlyingCause, AssociatedCause1, AssociatedCause2)
+
+# Note that we aren't going to use the 'Died' variable from the surveillance data, which indicates if the episode ends in death or not (ie, there are no missing values, and it does not account for LTFUP or Refusal, etc.)
+
+# length(unique(backbone_outcomes1$IndividualId))
+# 5052
+
+# nrow(backbone_outcomes1)
+# 44761
+
+# View(backbone_outcomes1)
+
+# View(backbone_outcomes1[backbone_outcomes1$IndividualId == 785, ])
+
+# View(backbone_visits1[backbone_outcomes1$IndividualId == 20504, ])
+
+```
+# Create indicator for if someone ends with administrative censoring
+```{r}
+backbone_outcomes2 <- backbone_outcomes1 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, VisitDate_DoD) %>%
+  # If they are missing a date of death and the IntervalEnd_PT for that interval is Dec 31 2018, they are administratively censored
+  # Note: we do not need to specify that this is the last person-assessment period for anyone because if the IntervalEnd_PT is Dec 31 2018, it's the last person-assessment period by definition, and if it's not equal to that but they are missing DoD, admin_cens would still be assigned a 0 because it has to meet both conditions to be assigned a 1 (everything else is a 0)
+  mutate(admin_cens = ifelse(((is.na(DoD)) & (IntervalEnd_PT == '2018-12-31')), 1, 0))
+
+# length(unique(backbone_outcomes2$IndividualId))
+# 5052
+
+# nrow(backbone_outcomes2)
+# 44761
+
+# View(backbone_outcomes2)
+
+# View(backbone_outcomes2[ , c('IndividualId', 'Episode', 'EarliestARTInitDate', 'IntervalStart', 'IntervalEnd_6mos', 'VisitDate_DoD', 'DoD', 'admin_cens')])
+```
+# Step 13
+Create a variable that marks 6 months before EVERY interval (we need this because we will filter later to episodes that occur 6 months before each period in order to summarize the exposure/covariates over that period)
+```{r}
+backbone_outcomes3 <- backbone_outcomes2 %>%
+  group_by(IndividualId) %>%
+  arrange(IndividualId, VisitDate_DoD) %>%
+  # If the assessment_date_DoD is the same as the EarliestARTInitDate (meaning assessment_rank_DoD ==1), then we know that the interval calculation started with EarliestARTInitDate as the start, meaning we want to count back 6 months from Earl7estARTInitDate 
+  # If the assessment_date_DoD comes after EarliestARTInitDate, we can use the original IntervalStart, which is by definition 6 months before the assessment_date_DoD in this case (ie, assessment_rank_DoD >= 2)
+  #mutate(IntervalStart_assess = ifelse(IntervalStart == EarliestARTInitDate, IntervalStart %m-% months(6), IntervalStart))
+  mutate(IntervalStart_assess = IntervalStart %m-% months(6))
+
+class(backbone_outcomes3$IntervalStart_assess) <- 'Date'
+
+# length(unique(backbone_outcomes3$IndividualId))
+# 5052
+
+# nrow(backbone_outcomes3)
+# 44761
+
+# View(backbone_outcomes3[backbone_outcomes3$IndividualId == 785, c('IndividualId', 'Episode', 'EarliestARTInitDate', 'IntervalStart_assess', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'EndDate_PT', 'VisitDate_DoD')])
+
+# Check on two assessments for this person
+# View(backbone_outcomes3[backbone_outcomes3$IndividualId == 231393, c('IndividualId', 'Episode', 'EarliestARTInitDate', 'IntervalStart_assess', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'EndDate_PT', 'VisitDate_DoD')])
+
+# Notice how the intervalstart_assess dates aren't in the episodes for this person - they are missing that person-time
+# View(backbone_outcomes3[backbone_outcomes3$IndividualId == 20504, c('IndividualId', 'Episode', 'EarliestARTInitDate', 'IntervalStart_assess', 'IntervalStart', 'IntervalEnd_PT', 'IntervalEnd_6mos', 'EndDate_PT', 'VisitDate_DoD')])
+# See how there are 3 visits here but then when we go to filter the exposure time period, we will lose visit 1 because there isn't person-time that occurs 6 months before visit 1, so since we lose it in the exposure data, we won't have it to merge to the outcomes backbone, and we will end up dropping it and the weight will be missing for the second (ie, first) visit
+```
+Prepare for merge of backbone and surveillance data set - subset both data sets to retain needed columns in each
+# Subset surveillance data to columns we need/want for merge with backbone
+```{r}
+backbone_sub <- backbone_outcomes3 %>%
+  select(-c('elapsed.time_mos', 'Episode'))
+
+# length(unique(backbone_sub$IndividualId))
+# 5052
+
+# nrow(backbone_sub)
+# 44761
+
+# View(backbone_sub)
+# View(backbone_sub[backbone_sub$IndividualId == 785, ])
+
+# To merge the backbone with the analytic sample surveillance data in this file, we need to drop the EndDate (because the surveillance data has EndDate in it)
+backbone_sub_for_merge <- backbone_outcomes3 %>%
+  select(-c('elapsed.time_mos', 'Episode', 'EndDate'))
+```
+# Save the backbone
+```{r}
+#This data set contains only rows that contain person-time that occurred 6 months before each assessment
+Step03Manipulating_BackboneAssessments <- backbone_sub
+save(Step03Manipulating_BackboneAssessments, file = 'Step03Manipulating_BackboneAssessments.Rdata')
+```
+# Subset surveillance data set to variables we need
+```{r}
+source_sub <- d1 %>%
+  select(-c('EarliestARTInitDate', 'DoD', 'Died', 'VisitDate', 'BMFStatusObservation', 'HIVSampleId', 'VLDetectableLimit', 'VLResult', 'VLResultCode', 'Cause1', 'Lik1', 'Cause2', 'Lik2', 'Cause3', 'Lik3', 'ImmediateCause', 'UnderlyingCause', 'AssociatedCause1', 'AssociatedCause2', 'LostToFollowUp', 'Refusal'))
+
+#View(source_sub)
+#View(source_sub[source_sub$IndividualId == 785, ])
+```
+# Merge this backbone data set with limited columns as the LHS to merge to the original surveillance (source) data set on the RHS
+Merge by IndidividualId only
+Here, we are going to merge such that we repeat every episode for every VisitDate_DoD, so that then we can filter to the episodes that contain 6 months of person-time before each assessment period (ie, the IntervalStart_assess to IntervalStart for each VisitDate_DoD)
+```{r}
+merge_backbone_surveillance <- left_join(x = backbone_sub_for_merge, y = source_sub, by = 'IndividualId')
+
+#View(merge_backbone_surveillance)
+
+#View(merge_backbone_surveillance[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'IntervalStart_assess', 'IntervalStart', 'IntervalEnd_6mos', 'VisitDate_DoD')])
+
+#View(merge_backbone_surveillance[merge_backbone_surveillance$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'IntervalStart_assess', 'IntervalStart', 'IntervalEnd_6mos', 'VisitDate_DoD')])
+```
+# Step 21
+Create data set filtered for only rows that include person-time that is 6 months before each assessment_date_DoD
+```{r}
+# Create filter to select rows contained in 6 months prior to each assessment period
+# These prior 6 months are bounded by IntervalStart_assess and IntervalStart
+merged_for_timevarying <- merge_backbone_surveillance %>%
+  # Does the StartDate fall within the 6-month window before the assessment period?
+  filter(((StartDate >= IntervalStart_assess) & (StartDate < IntervalStart)) |
+  # OR does the EndDate fall within the 6-month window before the assessment period?
+    ((EndDate >= IntervalStart_assess) & (EndDate < IntervalStart)) |
+  # OR does the StartDate and EndDate contain the 6-month window before the assessment period?
+    ((StartDate <= IntervalStart_assess) & (IntervalStart <= EndDate)))
+
+# length(unique(merged_for_timevarying$IndividualId))
+# 5052
+
+# nrow(merged_for_timevarying)
+# 167522, which is the number of rows that contain person-time that occurs 6 months before each assessment_date_DoD for persons within the analytic sample
+
+# View(merged_for_timevarying[merged_for_timevarying$IndividualId == 785, c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'EarliestARTInitDate', 'IntervalStart_assess', 'IntervalStart', 'VisitDate_DoD')])
+
+# This data set includes only the rows that contain person-time that occurs 6 months before each assessment_date_DoD
+```
+# Step 22
+Save as .Rdata file
+```{r}
+#This data set contains only rows that contain person-time that occurred 6 months before each assessment
+Step03Manip_Rows6moBeforeEachFUPPd <- merged_for_timevarying
+save(Step03Manip_Rows6moBeforeEachFUPPd, file = 'Step03Manip_Rows6moBeforeEachFUPPd.Rdata')
+```

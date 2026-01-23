@@ -1,0 +1,315 @@
+---
+title: "01_Cleaning"
+author: "Rachel Yorlets"
+date: "10/6/2022"
+output: html_document
+---
+The goal of this code file is to clean and retain sociodemographic variables from the SurveillanceExtended data set.
+
+# Step 1
+Load packages
+```{r}
+pacman::p_load(haven,       # read_dta()
+               lubridate,   # dates
+               dplyr,       # recode(), rename()
+               data.table,  # child code
+               questionr,   # rename.variable() in child code
+               tidyr        # pivot_longer()
+               )
+```
+# Step 2
+Load data set: AHRI.Surveillance Episodes Extended. Release 2019-07 - 2000
+Use this path for OSCAR
+~ refers to the home folder
+```{r}
+s <- read_dta("~/AHRI data/AHRI.Surveillance Episodes Extended. Release 2019-07 - 2000/SurveillanceEpisodesExtended.dta")
+```
+# Step 3
+Check min and max dates in the surveillance data set
+```{r}
+min(s$StartDate)
+max(s$EndDate)
+# Surveillance data set extends from 01Jan2000 to 31Dec2018
+```
+# Step 4
+Create a copy of the data set
+```{r}
+# Rename data sets
+data <- s
+```
+# Step 5
+Prepare key variables that are needed in the data set
+```{r}
+# Calculate elapsed time in each episode
+data$elapsed.time <- elapsed.time <- data$StartDate %--% data$EndDate
+
+# Denote factor variables
+data$Education <- as_factor(data$Education)
+data$Sex <- as_factor(data$Sex)
+data$MaritalStatus <- as_factor(data$MaritalStatus)
+```
+# Step 6
+Select variables to retain in data frame
+```{r}
+# Select variables
+d <- data %>%
+  select(IndividualId, Episode, Resident, LocationId, elapsed.time, Year, StartDate, EndDate, HIVStatus, EarliestHIVNeg, LatestHIVNeg, EarliestHIVPos, LatestHIVPos, ARTInitiation, EarliestARTInitDate, DoD, Died, Age, Sex, HouseholdId, HHRelation, Education, MaritalStatus, SEIdx, Cause1, Lik1, Cause2, Lik2, Cause3, Lik3, ImmediateCause, UnderlyingCause, AssociatedCause1, AssociatedCause2, LostToFollowUp, Refusal)
+
+length(unique(d$IndividualId))
+#220,648
+
+#View(d[, c('IndividualId', 'Episode', 'EarliestHIVPos', 'EarliestARTInitDate')])
+```
+# Step 7
+Clean sex variable
+```{r}
+#Sex
+#Cannot drop 'unknown' since there are two people in this category
+#d$Sex <- droplevels(d$Sex)
+# > length(unique(d$IndividualId[d$Sex == 'Unknown']))
+# [1] 2
+```
+# Step 8
+Clean education variable
+```{r}
+#Education
+length(is.na(unique(d$IndividualId[d$Education])))
+length(is.na(d$IndividualId[d$Education]))
+
+table(d$Education)
+
+d$edu <- recode(d$Education,
+                #old = new
+                'None' = 'Grade 7 or lower',
+                'Grade 1' = 'Grade 7 or lower',
+                'Grade 2' = 'Grade 7 or lower',
+                'Grade 3' = 'Grade 7 or lower',
+                'Grade 4' = 'Grade 7 or lower',
+                'Grade 5' = 'Grade 7 or lower',
+                'Grade 6' = 'Grade 7 or lower',
+                'Grade 7' = 'Grade 7 or lower',
+                'Grade 8' = 'Grade 8 or higher',
+                'Grade 9' = 'Grade 8 or higher',
+                'Grade 10' = 'Grade 8 or higher',
+                'Grade 11' = 'Grade 8 or higher',
+                'Grade 12' = 'Grade 8 or higher',
+                'Some tertiary' = 'Grade 8 or higher',
+                'Tertiary qualification' = 'Grade 8 or higher')
+#to drop the '?' category, which has no observations in it
+d$edu <- droplevels(d$edu)
+table(d$edu, exclude = NULL)
+```
+# Step 9
+Clean marital status variable
+```{r}
+#Marital status
+d$marital <- recode(d$MaritalStatus,
+                    # old=new
+                    'Unknown' = '<NA>',
+                    'Not married' = 'Not married',
+                    'Married' = 'Married or cohabiting',
+                    'Widowed' = 'Not married',
+                    'Separated/divorced' = 'Not married',
+                    'Informal union' = 'Married or cohabiting')
+d$marital <- droplevels(d$marital)
+table(d$marital, exclude = NULL)
+```
+# Step 10
+To prepare for creating the time-varying number of children, which involves a Cartesian merge, set unnecessary data sets/copies = NULL
+```{r}
+data <- NULL
+```
+# Step 11
+Calculate time-varying number of children in household for each person in the full surveillance data set
+Maxime Inghels 
+```{r}
+#Convert d to a data.table to also help conserve memory
+d <- as.data.table(d)
+
+sepext2019 <- d
+d <- NULL
+
+#Rename IndividualId
+sepext2019 <- sepext2019 %>%
+  rename.variable(old = 'IndividualId', new = 'IIntId')
+
+# select age<15
+setDT(sepext2019)
+dt <- sepext2019[Age < 15,.(IIntId, HouseholdId, StartDate, EndDate)]
+
+# remove duplicated lines (when an event occur the next day)
+dt <- as.data.table(pivot_longer(dt, cols = c("StartDate", "EndDate")))
+setorder(dt, HouseholdId, IIntId, value, -name)
+
+dt[, RowNumber := 1:.N]
+
+tmp <- dt[(name == "StartDate" & IIntId == lag(IIntId) & HouseholdId == lag(HouseholdId) & 
+             (value == lag(value) | value == lag(value)+1)) |
+            (name == "EndDate" & IIntId == lead(IIntId) & HouseholdId == lead(HouseholdId) & 
+               (value == lead(value) | value == lead(value)-1)), ]
+
+dt <- dt[!RowNumber %in% tmp$RowNumber,]
+dt$RowNumber <- NULL
+
+# count the number of household member <15
+setorder(dt, HouseholdId, value, -name)
+
+dt[, tmp := ifelse(name == "StartDate", 1, -1)]
+dt <- dt[, sum(tmp), by = .(HouseholdId, value)]
+
+dt[, ChildNumber := cumsum(V1), by = HouseholdId]
+dt$V1 <- NULL
+dt <- rename.variable(dt, old = "value", new = "StartDate")
+
+# add EndDate and link with max date follow-up
+## EndFollowUp
+dt <- merge(dt, sepext2019[ ,.(EndFollowUp = max(EndDate),
+                              StartFollowUp = min(StartDate)), 
+                           by = HouseholdId], by = "HouseholdId", all.x = T)
+
+setorder(dt, HouseholdId, StartDate)
+dt[, EndDate := lead(StartDate), by = HouseholdId]
+
+dt <- dt[StartDate != EndFollowUp,]
+dt[is.na(EndDate), EndDate := EndFollowUp]
+
+dt[StartDate == lag(EndDate), StartDate := StartDate+1]
+dt$EndFollowUp <- NULL
+
+## StartFollowUp, had record for those who start follow-up without children
+dt[,StartDateMin := min(StartDate), by = HouseholdId]
+id <- dt[StartDateMin != StartFollowUp, HouseholdId]
+
+dt <- rbind(unique(dt[HouseholdId %in% id, .(HouseholdId, StartDate = StartFollowUp, 
+                                             EndDate = as.Date(NA), ChildNumber = 0)]),
+      dt[,.(HouseholdId,StartDate,EndDate,ChildNumber)])
+
+setorder(dt, HouseholdId, StartDate)
+
+dt[, tmp:= lead(StartDate)-1, by = HouseholdId]
+dt[is.na(EndDate), EndDate := tmp]
+dt$tmp <- NULL
+
+# add household with no children during all the follow-up
+id <- unique(sepext2019$HouseholdId)[!unique(sepext2019$HouseholdId) %in% unique(dt$HouseholdId)]
+
+dt <- rbind(dt, unique(sepext2019[HouseholdId %in% id, .(HouseholdId,
+                                                         StartDate = min(StartDate), 
+                                                         EndDate = max(EndDate), 
+                                                         ChildNumber = 0)]))
+
+# keep only required variables
+dt <- dt[, .(HouseholdId, Start = StartDate, End = EndDate, ChildNumber)]
+
+#Select only essential columns from surveillance data set subset
+sep <- sepext2019[,.(IIntId, HouseholdId, StartDate, EndDate, Episode)]
+
+#clean to prepare for merge
+#sepext2019 <- NULL
+gc()
+
+################
+#Merge from Maxime
+#merge sep with dt + build final dataset
+sep <- merge(sep, dt, by = 'HouseholdId', allow.cartesian = TRUE, all.x = TRUE)
+
+sep <- sep[StartDate <= End & EndDate >= Start, ]
+
+sep[StartDate < Start, StartDate:= Start]
+sep[EndDate > End, EndDate:= End]
+
+setkey(sep, 'IIntId', 'StartDate')
+###################
+
+#Checking results---
+
+sep[Episode >1 & IIntId == lag(IIntId) & !StartDate-1 == lag(EndDate) ,] 
+# above some have history gaps between two households
+sep[Episode >1 & HouseholdId  == lag(HouseholdId) & IIntId == lag(IIntId) & !StartDate-1 == lag(EndDate) ,] 
+# above 391 with gaps within one household, but look like it is the same in the sepext2019 dataset
+
+length(unique(sep$IIntId)) == length(unique(sepext2019$IIntId)) # same ID in sep and the original one
+nrow(sep[Episode == 1, .N, by = IIntId]) == length(unique(sep$IIntId)) # All individuals have their first episode
+sep[IIntId == lead(IIntId) & !(Episode == lead(Episode) | Episode+1 == lead(Episode)), .N] # all the Episodes follows one after another so missing episode
+
+tmp <- merge(sep[,.(V1 = max(Episode)), by = IIntId], sepext2019[,.(V2 = max(Episode)), by = IIntId], by = "IIntId")
+tmp[V1 !=V2,.N]# last episode of individuals match
+
+#this is where I paused at 2:03
+#Merge back to surveillance data set (other covariates)
+df <- merge(sepext2019[, c('StartDate', 'EndDate'):= NULL],
+                sep[ ,.(HouseholdId, IIntId, StartDate, EndDate, Episode, ChildNumber)],
+                by = c("IIntId", "Episode"),
+                all.x = T)
+
+df <- as.data.frame(df)
+length(unique(df$IIntId))
+#[1] 220648
+length(unique(df$IIntId[is.na(df$ChildNumber)]))
+#0 persons have NA for missing number of children
+
+setDT(df)
+
+#Arrange by IndividualId and StartDate
+setkey(df, 'IIntId', 'StartDate')
+#re-number episode numbers so that there are no more duplicates (which were created from splicing person-time for children count)
+df[, Episode := 1:.N, by = IIntId]
+
+df <- as.data.frame(df)
+
+# rename IIntId as IndividualId
+# newname = oldname
+df <- rename(df, IndividualId = IIntId)
+
+# #Check on why 30000 people have NA for ChildNumber
+# df$HouseholdId.x[is.na(df$ChildNumber)]
+# 
+# df$HouseholdId.y[is.na(df$ChildNumber)]
+# df$ChildNumber[is.na(df$HouseholdId.y)]
+# 
+# df_missingchildren <- subset(df, is.na(ChildNumber))
+# #look at IndividualId 72 and 153, for example
+# 
+# View(df_missingchildren[ , c('IndividualId', 'HouseholdId.x', 'HouseholdId.y', 'ChildNumber', 'Episode', 'StartDate', 'EndDate',  'Education', 'Age', 'SEIdx', 'MaritalStatus', 'Sex')])
+# 
+# df$ChildNumber <- replace_na(df$ChildNumber, 0)
+# #look at IndividualId 72 and 153, for example, which we know from above df_missingchildren had missing ChildNumber and missing HouseholdId.y
+# View(df[ , c('IndividualId', 'HouseholdId.x', 'HouseholdId.y', 'ChildNumber', 'Episode', 'StartDate', 'EndDate',  'Education', 'Age', 'SEIdx', 'MaritalStatus', 'Sex')])
+
+
+# #Clean
+# d <- NULL
+# dchildren <- NULL
+```
+# Step 12
+Run checks to see if child number code is working
+Specifically, select 10 individuals, and for each individual, check that the episodes are correct regarding both the surveillance episode and the data set with the # of children when compared to the original surveillance data set
+```{r}
+df_sub <- subset(df, IndividualId == 11 | IndividualId == 12 | IndividualId == 13 | IndividualId == 14 | IndividualId == 15 | IndividualId == 16 | IndividualId == 17 | IndividualId == 18 | IndividualId == 19 | IndividualId == 20)
+
+s_sub <- subset(s, IndividualId == 11 | IndividualId == 12 | IndividualId == 13 | IndividualId == 14 | IndividualId == 15 | IndividualId == 16 | IndividualId == 17 | IndividualId == 18 | IndividualId == 19 | IndividualId == 20)
+
+View(df_sub[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'ChildNumber', 'Education', 'Age', 'SEIdx', 'MaritalStatus', 'Sex')])
+
+View(s_sub[ , c('IndividualId', 'Episode', 'StartDate', 'EndDate', 'Education', 'Age', 'SEIdx', 'MaritalStatus', 'Sex')])
+# Reviewed these checks in lab notebooks for first 10 episodes in each data set for the first 7 people, and covariates all matched by time periods (episode numbers have changed from original s_sub to edited df_sub), with the exception of the children, which changed
+#Adding the children added about 1.1M rows of data, and this is just because it spliced existing episodes because children changed within episodes - so we could be more granular
+```
+# Step 13
+Clear memory space by setting data frames <- NULL if we don't need them anymore
+```{r}
+s <- NULL
+s_sub <- NULL
+df_sub <- NULL
+```
+# Step 14
+Save data frame with cleaned sociodemographic variables as a .Rdata file
+```{r}
+Step01Clean <- df
+save(Step01Clean, file = '01_Cleaning.Rdata')
+```
+# Step 15
+Clear memory space by setting final data frame <- NULL since we don't need it anymore
+```{r}
+df <- NULL
+```
