@@ -1,0 +1,91 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Page-1" id="V4zZNgWxAjXoLVqgNIGC">
+    <mxGraphModel dx="963" dy="638" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;Africa Health Research Institute Population Intervention Platform&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;January 1, 2000–December 31, 2018&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=220,648&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="330" x="120" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-12" edge="1" parent="1" source="dXYzbCVlXV2maE0Ro8GB-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dXYzbCVlXV2maE0Ro8GB-11" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-2" parent="1" style="whiteSpace=wrap;html=1;rounded=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;People who contributed person-time at age 15 or older&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;(&lt;i&gt;i.e.,&lt;/i&gt;&amp;nbsp;eligible for HIV surveillance)&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=158,730&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="330" x="120" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;" value="&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; Excluded (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;=61,918)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; – People without person-time at age 15 or older (&lt;i&gt;n&lt;/i&gt;=61,918)&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="330" x="480" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-9" edge="1" parent="1" source="dXYzbCVlXV2maE0Ro8GB-1" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="dXYzbCVlXV2maE0Ro8GB-2" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="540" y="290" as="sourcePoint" />
+            <mxPoint x="590" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-10" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="dXYzbCVlXV2maE0Ro8GB-4" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="100" as="sourcePoint" />
+            <mxPoint x="590" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-17" edge="1" parent="1" source="dXYzbCVlXV2maE0Ro8GB-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dXYzbCVlXV2maE0Ro8GB-16" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-11" parent="1" style="whiteSpace=wrap;html=1;rounded=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;People who initiated ART between&lt;/font&gt;&lt;div&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;January 1, 2011 and December 31, 2018&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=10,981&lt;/font&gt;&lt;/div&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="330" x="120" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;" value="&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; Excluded (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;=147,749)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; – People without an ART initiation date (&lt;i&gt;n&lt;/i&gt;=141,825)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;&amp;nbsp; – People who initiated ART before January 1, 2011 (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;=5,890)&lt;/span&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;&amp;nbsp; – People who initiated ART after December 31, 2018 (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;=34)&lt;/span&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;;&quot;&gt;&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="330" x="480" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-15" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="189.57" as="sourcePoint" />
+            <mxPoint x="480" y="189.57" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-21" edge="1" parent="1" source="dXYzbCVlXV2maE0Ro8GB-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dXYzbCVlXV2maE0Ro8GB-20" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-16" parent="1" style="whiteSpace=wrap;html=1;rounded=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;People who had not experienced initial viral suppression before their earliest known date of ART initiation&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=10,739&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="330" x="120" y="305" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-18" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;" value="&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; Excluded (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;=242)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; – People with viral suppression before ART initiation date (&lt;i&gt;n&lt;/i&gt;=242)&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="330" x="480" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-19" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="280" as="sourcePoint" />
+            <mxPoint x="480" y="280" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-25" edge="1" parent="1" source="dXYzbCVlXV2maE0Ro8GB-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dXYzbCVlXV2maE0Ro8GB-24" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-20" parent="1" style="whiteSpace=wrap;html=1;rounded=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;People who were participating in the surveillance platform when they initiated ART&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=5,446&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="330" x="120" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;" value="&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; Excluded (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;=5,293)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; – People who were not participants at ART initiation (&lt;i&gt;n&lt;/i&gt;=5,293)&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="330" x="480" y="365" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-23" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="382" as="sourcePoint" />
+            <mxPoint x="480" y="382" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-24" parent="1" style="whiteSpace=wrap;html=1;rounded=1;" value="&lt;font face=&quot;Times New Roman&quot;&gt;People who contributed person-time at least one year before ART initiation&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot;&gt;&lt;i&gt;n&lt;/i&gt;=5,052&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="330" x="120" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-26" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;" value="&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; Excluded (&lt;/span&gt;&lt;i style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;n&lt;/i&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;=394)&lt;/span&gt;&lt;/div&gt;&lt;div style=&quot;&quot;&gt;&lt;span style=&quot;font-family: &amp;quot;Times New Roman&amp;quot;; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; – People without person-time at least one year beforehand (&lt;i&gt;n&lt;/i&gt;=394)&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="330" x="480" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="dXYzbCVlXV2maE0Ro8GB-27" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="489.57" as="sourcePoint" />
+            <mxPoint x="480" y="489.57" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
